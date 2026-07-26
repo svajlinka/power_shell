@@ -7,7 +7,9 @@ function projects {
     }
 
     while ($true) {
-        $lista = @((Get-Content $f -Raw | ConvertFrom-Json).profiles.list.name)
+        $profiler = (Get-Content $f -Raw | ConvertFrom-Json).profiles.list
+        $allaNamn = @($profiler | ForEach-Object { $_.name })
+        $lista    = @($profiler | Where-Object { -not $_.hidden } | ForEach-Object { $_.name } | Sort-Object)
 
         Write-Host ""
         for ($i = 0; $i -lt $lista.Count; $i++) {
@@ -39,7 +41,7 @@ function projects {
 
             $namn = Split-Path $sokv -Leaf
 
-            if ($lista -contains $namn) {
+            if ($allaNamn -contains $namn) {
                 Write-Warning "Profilen '$namn' finns redan."
                 continue
             }
