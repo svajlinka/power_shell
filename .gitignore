@@ -1,0 +1,16 @@
+# Local notification state and generated configuration
+/AgentNotifications/
+/events.jsonl
+/agent-notifications.config.toml
+/claude-settings.json
+
+# Test output
+/TestResults/
+*.trx
+
+# User-specific tooling and operating-system files
+/.vs/
+*.user
+.DS_Store
+Thumbs.db
+Desktop.ini
