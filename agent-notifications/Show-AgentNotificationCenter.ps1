@@ -23,9 +23,17 @@ function Show-Center {
     if ($displayEntries.Count -eq 0) {
         Write-Host '  No notifications yet.' -ForegroundColor DarkGray
     } else {
+        $chatNames = @{}
         foreach ($entry in $displayEntries) {
             $event = $entry.event
-            $line = Format-AgentNotificationDisplayLine -Event $event -Number $entry.number
+            $source = "$($event.source)"
+            $sessionId = "$($event.sessionId)"
+            $chatKey = "$source`0$sessionId"
+            if (-not $chatNames.ContainsKey($chatKey)) {
+                $chatNames[$chatKey] = Get-AgentNotificationChatName -Event $event
+            }
+            $line = Format-AgentNotificationDisplayLine -Event $event -Number $entry.number `
+                -ChatName $chatNames[$chatKey]
             $color = if (Test-AgentNotificationHandled -Event $event) { 'Blue' } else { 'Yellow' }
             Write-Host $line -ForegroundColor $color
         }

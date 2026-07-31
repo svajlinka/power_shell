@@ -153,15 +153,15 @@ try {
         -CodexSessionIndexPath $codexIndex -CodexHistoryPath $codexHistory `
         -ClaudeHistoryPath $claudeHistory) 'Codex chat' 'Legacy notification did not receive a safe chat fallback'
 
-    $manyEvents = @(1..35 | ForEach-Object { [pscustomobject]@{ id = "event-$_" } })
+    $manyEvents = @(1..120 | ForEach-Object { [pscustomobject]@{ id = "event-$_" } })
     $displayEvents = @(Get-AgentNotificationDisplayEvents -Events $manyEvents)
-    Assert-Equal $displayEvents.Count 30 'Notification display was not limited to the latest 30 events'
-    Assert-Equal $displayEvents[0].id 'event-6' 'Visible notifications did not start with the oldest retained event'
-    Assert-Equal $displayEvents[29].id 'event-35' 'Latest notification was not placed at the bottom'
+    Assert-Equal $displayEvents.Count 99 'Notification display was not limited to the latest 99 events'
+    Assert-Equal $displayEvents[0].id 'event-22' 'Visible notifications did not start with the oldest retained event'
+    Assert-Equal $displayEvents[98].id 'event-120' 'Latest notification was not placed at the bottom'
     $displayEntries = @(Get-AgentNotificationDisplayEntries -Events $manyEvents)
-    Assert-Equal $displayEntries[0].number 30 'Top notification did not receive the oldest visible number'
-    Assert-Equal $displayEntries[29].number 1 'Latest notification at the bottom was not numbered 1'
-    Assert-Equal (Find-AgentNotificationDisplayEvent -Events $manyEvents -Number 1).id 'event-35' 'Selection 1 did not resolve to the latest notification'
+    Assert-Equal $displayEntries[0].number 99 'Top notification did not receive the oldest visible number'
+    Assert-Equal $displayEntries[98].number 1 'Latest notification at the bottom was not numbered 1'
+    Assert-Equal (Find-AgentNotificationDisplayEvent -Events $manyEvents -Number 1).id 'event-120' 'Selection 1 did not resolve to the latest notification'
 
     $stopPayload = [pscustomobject]@{
         hook_event_name = 'Stop'
@@ -205,6 +205,8 @@ try {
     Assert-True ($centerSource -match 'Set-AllAgentNotificationsHandled') 'Notification pane is missing the done-all shortcut'
     Assert-True ($centerSource -match 'IsNullOrEmpty\(\$inputBuffer\)[\s\S]+?\$selection = 1') 'Blank Enter does not default to the latest notification'
     Assert-True ($centerSource -match 'Enter = latest') 'Notification help does not advertise the blank-Enter shortcut'
+    Assert-True ($centerSource -match '\$chatNames = @\{\}[\s\S]+?Format-AgentNotificationDisplayLine[\s\S]+?-ChatName') `
+        'Notification center does not reuse chat names while rendering multiple events from one session'
     Assert-True ($centerSource -notmatch '\$key\.Key -eq \[ConsoleKey\]::[DCQ]') 'A letter command still executes before Enter'
     Assert-True ($centerSource -match '\$command -eq ''d''[\s\S]+?Set-AllAgentNotificationsHandled') 'Done-all is not dispatched by Enter'
     Assert-True ($centerSource -match '\$command -eq ''c''[\s\S]+?Clear-AgentNotificationEvents') 'Clear is not dispatched by Enter'

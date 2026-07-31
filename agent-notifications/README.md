@@ -19,7 +19,7 @@ On the first launcher-created Codex session, run `/hooks` and trust the `PreTool
 - Selecting an already-open project focuses its existing window instead of launching another one.
 - Enter an event number in the right pane to focus its original chat.
 - Press Enter with an empty selection to open notification `1`, the latest chat.
-- Notifications are shown oldest-to-newest from top to bottom, with the latest event numbered `1` at the bottom.
+- Up to 99 notifications are shown oldest-to-newest from top to bottom, with the latest event numbered `1` at the bottom.
 - Each row contains only its number, time, short project name, and best available chat name.
 - Each new event also shows a short native Windows toast with the project and chat name. Its **Open chat** button follows the same exact-chat routing as the inbox and marks the event handled after a successful open.
 - Native Codex answer-choice questions are captured as input notifications before Codex waits for your selection.

@@ -194,8 +194,23 @@ function Get-AgentNotificationChatName {
             }
         }
         if ([string]::IsNullOrWhiteSpace($name) -and (Test-Path -LiteralPath $CodexSessionsPath)) {
-            $rolloutPath = Get-ChildItem -LiteralPath $CodexSessionsPath -Recurse -File `
-                -Filter "*-$sessionId.jsonl" -ErrorAction SilentlyContinue | Select-Object -First 1
+            $rolloutPath = $null
+            $normalizedSessionId = $sessionId -replace '-', ''
+            if ($normalizedSessionId -match '^[0-9a-fA-F]{32}$') {
+                try {
+                    $sessionDate = [DateTimeOffset]::FromUnixTimeMilliseconds(
+                        [Convert]::ToInt64($normalizedSessionId.Substring(0, 12), 16)).ToLocalTime()
+                    $sessionDirectory = Join-Path $CodexSessionsPath $sessionDate.ToString('yyyy\MM\dd')
+                    if (Test-Path -LiteralPath $sessionDirectory) {
+                        $rolloutPath = Get-ChildItem -LiteralPath $sessionDirectory -File `
+                            -Filter "*-$sessionId.jsonl" -ErrorAction SilentlyContinue | Select-Object -First 1
+                    }
+                } catch { }
+            }
+            if ($null -eq $rolloutPath) {
+                $rolloutPath = Get-ChildItem -LiteralPath $CodexSessionsPath -Recurse -File `
+                    -Filter "*-$sessionId.jsonl" -ErrorAction SilentlyContinue | Select-Object -First 1
+            }
             if ($null -ne $rolloutPath) {
                 $stream = $null
                 $reader = $null
@@ -266,14 +281,14 @@ function Get-AgentNotificationChatName {
 }
 
 function Get-AgentNotificationDisplayEvents {
-    param([object[]]$Events, [int]$MaximumCount = 30)
+    param([object[]]$Events, [int]$MaximumCount = 99)
 
     if ($null -eq $Events -or $Events.Count -eq 0 -or $MaximumCount -le 0) { return @() }
     return @($Events | Select-Object -Last $MaximumCount)
 }
 
 function Get-AgentNotificationDisplayEntries {
-    param([object[]]$Events, [int]$MaximumCount = 30)
+    param([object[]]$Events, [int]$MaximumCount = 99)
 
     $visible = @(Get-AgentNotificationDisplayEvents -Events $Events -MaximumCount $MaximumCount)
     $entries = New-Object System.Collections.Generic.List[object]
@@ -290,7 +305,7 @@ function Find-AgentNotificationDisplayEvent {
     param(
         [object[]]$Events,
         [Parameter(Mandatory = $true)][int]$Number,
-        [int]$MaximumCount = 30
+        [int]$MaximumCount = 99
     )
 
     $entry = @(Get-AgentNotificationDisplayEntries -Events $Events -MaximumCount $MaximumCount |
@@ -310,6 +325,7 @@ function Format-AgentNotificationDisplayLine {
     param(
         [Parameter(Mandatory = $true)][object]$Event,
         [Parameter(Mandatory = $true)][int]$Number,
+        [AllowEmptyString()][string]$ChatName,
         [string]$CodexSessionIndexPath,
         [string]$CodexHistoryPath,
         [string]$ClaudeHistoryPath
@@ -318,8 +334,11 @@ function Format-AgentNotificationDisplayLine {
     $timestamp = Get-AgentNotificationProperty -InputObject $Event -Name 'timestamp'
     $time = ([DateTimeOffset]::Parse("$timestamp")).ToLocalTime().ToString('HH:mm:ss')
     $project = Get-AgentNotificationProjectName -Event $Event
-    $chat = Get-AgentNotificationChatName -Event $Event -CodexSessionIndexPath $CodexSessionIndexPath `
-        -CodexHistoryPath $CodexHistoryPath -ClaudeHistoryPath $ClaudeHistoryPath
+    $chat = $ChatName
+    if ([string]::IsNullOrWhiteSpace($chat)) {
+        $chat = Get-AgentNotificationChatName -Event $Event -CodexSessionIndexPath $CodexSessionIndexPath `
+            -CodexHistoryPath $CodexHistoryPath -ClaudeHistoryPath $ClaudeHistoryPath
+    }
     return '{0,3}  {1}  {2}  {3}' -f $Number, $time, $project, $chat
 }
 
