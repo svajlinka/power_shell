@@ -1,22 +1,162 @@
+$script:PowerShellToolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$script:AgentNotificationsRoot = Join-Path $script:PowerShellToolsRoot 'agent-notifications'
+
+function Get-AgentNotificationConfiguration {
+    [pscustomobject]@{
+        CodexProfile   = Join-Path $env:USERPROFILE '.codex\agent-notifications.config.toml'
+        ClaudeSettings = Join-Path $env:LOCALAPPDATA 'AgentNotifications\claude-settings.json'
+        CenterScript   = Join-Path $script:AgentNotificationsRoot 'Show-AgentNotificationCenter.ps1'
+        Installer      = Join-Path $script:AgentNotificationsRoot 'Install-AgentNotifications.ps1'
+    }
+}
+
+function Install-AgentNotifications {
+    param([switch]$Uninstall, [switch]$Force)
+
+    $configuration = Get-AgentNotificationConfiguration
+    $installerArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $configuration.Installer)
+    if ($Uninstall) { $installerArguments += '-Uninstall' }
+    if ($Force) { $installerArguments += '-Force' }
+    & powershell.exe @installerArguments
+}
+
+function Test-NamedMutexExists {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    try {
+        $mutex = [System.Threading.Mutex]::OpenExisting($Name)
+        $mutex.Dispose()
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Start-AgentNotificationCenter {
+    $configuration = Get-AgentNotificationConfiguration
+    if (Test-NamedMutexExists -Name 'Local\AgentNotifications.Center') {
+        Start-Process wt.exe -ArgumentList @('-w', 'agent-notification-center', 'focus-tab', '-t', '0')
+        return $true
+    }
+
+    $centerScript = "& '" + ($configuration.CenterScript -replace "'", "''") + "'"
+    $encodedCenterScript = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($centerScript))
+    $terminalArguments = '-w agent-notification-center new-tab --title Agent-Notifications powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand {0}' -f $encodedCenterScript
+    Start-Process wt.exe -ArgumentList $terminalArguments
+    return $true
+}
+
+function New-AgentPaneEncodedCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$Command,
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][int]$Pane,
+        [Parameter(Mandatory = $true)][string]$Project,
+        [Parameter(Mandatory = $true)][string]$Window,
+        [Parameter(Mandatory = $true)][string]$Guard,
+        [string[]]$Arguments = @()
+    )
+
+    $escaped = (@($Command, $Source, "$Pane", $Project, $Window, $Guard) + $Arguments) | ForEach-Object {
+        "'" + ("$_" -replace "'", "''") + "'"
+    }
+    $argumentText = if ($Arguments.Count -gt 0) { ' ' + ($escaped[6..($escaped.Count - 1)] -join ' ') } else { '' }
+    $paneScript = @"
+`$env:AI_NOTIFY_ENABLED = '1'
+`$env:AI_NOTIFY_SOURCE = $($escaped[1])
+`$env:AI_NOTIFY_PANE = $($escaped[2])
+`$env:AI_NOTIFY_PROJECT = $($escaped[3])
+`$env:AI_NOTIFY_WINDOW = $($escaped[4])
+`$env:AI_NOTIFY_GUARD = $($escaped[5])
+`$global:AgentNotificationWindowGuard = New-Object System.Threading.Mutex(`$false, $($escaped[5]))
+& $($escaped[0])$argumentText
+"@
+    return [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($paneScript))
+}
+
 function Start-ProjectWindow {
     param(
         [string]$ProfileName,
         [string[]]$Commands = @('codex', 'codex', 'claude', 'claude')  # left to right
     )
 
-    $q     = '"{0}"' -f $ProfileName
-    $shell = 'powershell.exe -NoExit -Command'
-    $parts = @("-w new nt -p $q $shell $($Commands[0])")
+    $configuration = Get-AgentNotificationConfiguration
+    if (-not (Test-Path -LiteralPath $configuration.CodexProfile) -or
+        -not (Test-Path -LiteralPath $configuration.ClaudeSettings)) {
+        Write-Warning 'Agent notifications are not installed. Run Install-AgentNotifications and retry.'
+        return
+    }
 
-    # Each sp splits the focused pane, so the fraction must shrink to get equal columns.
-    for ($i = 1; $i -lt $Commands.Count; $i++) {
+    $codexCommand = Get-Command codex.cmd -ErrorAction SilentlyContinue
+    $claudeCommand = Get-Command claude.exe -ErrorAction SilentlyContinue
+    if ($null -eq $codexCommand -or $null -eq $claudeCommand) {
+        Write-Warning 'Cannot find codex.cmd and claude.exe on PATH.'
+        return
+    }
+
+    [void](Start-AgentNotificationCenter)
+    $windowName = 'agent-project-' + [guid]::NewGuid().ToString('N')
+    $guardName = 'Local\AgentNotifications.Project.' + $windowName
+    $q     = '"{0}"' -f $ProfileName
+    $parts = @()
+
+    for ($i = 0; $i -lt $Commands.Count; $i++) {
+        $source = if ($Commands[$i] -eq 'codex') { 'Codex' } else { 'Claude' }
+        $commandPath = if ($source -eq 'Codex') { $codexCommand.Source } else { $claudeCommand.Source }
+        $arguments = if ($source -eq 'Codex') {
+            @('--profile', 'agent-notifications')
+        } else {
+            @('--settings', $configuration.ClaudeSettings)
+        }
+        $encoded = New-AgentPaneEncodedCommand -Command $commandPath -Source $source -Pane ($i + 1) `
+            -Project $ProfileName -Window $windowName -Guard $guardName -Arguments $arguments
+        $shell = "powershell.exe -NoExit -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
+
+        if ($i -eq 0) {
+            $parts += "-w $windowName new-tab --title `"$($i + 1) $source`" -p $q $shell"
+            continue
+        }
+
+        # Each sp splits the focused pane, so the fraction must shrink to get equal columns.
         $share = ($Commands.Count - $i) / ($Commands.Count - $i + 1)
         $size  = $share.ToString('0.####', [cultureinfo]::InvariantCulture)
-        $parts += "sp -V -s $size -p $q $shell $($Commands[$i])"
+        $parts += "sp -V -s $size --title `"$($i + 1) $source`" -p $q $shell"
     }
     $parts += 'mf first'
 
     Start-Process wt -ArgumentList ($parts -join ' ; ')
+}
+
+function Test-AgentNotification {
+    param(
+        [ValidateSet('approval', 'finished')]
+        [string]$Type = 'finished'
+    )
+
+    $receiver = Join-Path $script:AgentNotificationsRoot 'Receive-AgentNotification.ps1'
+    $oldValues = @{}
+    foreach ($name in @('AI_NOTIFY_ENABLED', 'AI_NOTIFY_SOURCE', 'AI_NOTIFY_PANE', 'AI_NOTIFY_PROJECT', 'AI_NOTIFY_WINDOW', 'AI_NOTIFY_GUARD')) {
+        $oldValues[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    }
+    try {
+        $env:AI_NOTIFY_ENABLED = '1'
+        $env:AI_NOTIFY_SOURCE = 'Test'
+        $env:AI_NOTIFY_PANE = '0'
+        $env:AI_NOTIFY_PROJECT = 'Notification smoke test'
+        $env:AI_NOTIFY_WINDOW = 'agent-notification-center'
+        $env:AI_NOTIFY_GUARD = 'Local\AgentNotifications.Center'
+        $payload = if ($Type -eq 'approval') {
+            '{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"description":"Test approval required"}}'
+        } else {
+            '{"hook_event_name":"Stop","last_assistant_message":"Test turn finished successfully"}'
+        }
+        $payload | & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $receiver | Out-Null
+        [void](Start-AgentNotificationCenter)
+    } finally {
+        foreach ($name in $oldValues.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $oldValues[$name], 'Process')
+        }
+    }
 }
 
 function Get-ProjectProfileName {
