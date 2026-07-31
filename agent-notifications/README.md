@@ -25,10 +25,10 @@ On the first launcher-created Codex session, run `/hooks` and trust the `Permiss
 - Unhandled notifications are yellow. A notification turns blue after selecting it successfully focuses or resumes its chat.
 - If that project window was closed, selecting a new event rebuilds the four-pane layout and resumes its exact Codex or Claude chat in the original pane.
 - Older events without a saved session ID fall back to focusing or reopening the project.
-- Press `d` with an empty selection to mark every notification handled without deleting it.
+- Type `d` and press Enter to mark every notification handled without deleting it.
 - Typing or correcting a selection updates only the input prompt; the notification list is not redrawn until Enter is pressed or its data changes.
-- Press `c` with an empty notification selection to clear the history.
-- Press `q` in either pane to close that pane; the next `p` restores any missing pane.
+- Type `c` and press Enter to clear the notification history.
+- Type `q` and press Enter in the notification pane to close it; the next `p` restores it.
 - Close the Agent Control Center window normally to close both panes together.
 - Run `Test-AgentNotification approval` or `Test-AgentNotification finished` to send a test event.
 

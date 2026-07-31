@@ -16,7 +16,7 @@ function Show-Center {
 
     Clear-Host
     Write-Host '---==[ Agent Notifications ]==---' -ForegroundColor Cyan
-    Write-Host 'Enter = latest   number = open chat   d = done all   c = clear   q = close' -ForegroundColor DarkGray
+    Write-Host 'Enter = latest   number/d/c/q + Enter = run command' -ForegroundColor DarkGray
     Write-Host ''
 
     $displayEntries = @(Get-AgentNotificationDisplayEntries -Events $Events)
@@ -72,24 +72,6 @@ try {
 
         if ([Console]::KeyAvailable) {
             $key = [Console]::ReadKey($true)
-            if ($key.Key -eq [ConsoleKey]::Q) { break }
-            if ($key.Key -eq [ConsoleKey]::D -and [string]::IsNullOrEmpty($inputBuffer)) {
-                [void](Set-AllAgentNotificationsHandled -StateRoot $StateRoot)
-                $events = @(Read-AgentNotificationEvents -StateRoot $StateRoot)
-                $notice = ''
-                $lastSignature = ''
-                $needsRender = $true
-                continue
-            }
-            if ($key.Key -eq [ConsoleKey]::C -and [string]::IsNullOrEmpty($inputBuffer)) {
-                Clear-AgentNotificationEvents -StateRoot $StateRoot
-                $events = @()
-                $inputBuffer = ''
-                $notice = ''
-                $lastSignature = ''
-                $needsRender = $true
-                continue
-            }
             if ($key.Key -eq [ConsoleKey]::Backspace) {
                 if ($inputBuffer.Length -gt 0) {
                     $inputBuffer = $inputBuffer.Substring(0, $inputBuffer.Length - 1)
@@ -98,6 +80,26 @@ try {
                 continue
             }
             if ($key.Key -eq [ConsoleKey]::Enter) {
+                $command = $inputBuffer.ToLowerInvariant()
+                if ($command -eq 'q') { break }
+                if ($command -eq 'd') {
+                    [void](Set-AllAgentNotificationsHandled -StateRoot $StateRoot)
+                    $events = @(Read-AgentNotificationEvents -StateRoot $StateRoot)
+                    $inputBuffer = ''
+                    $notice = ''
+                    $lastSignature = ''
+                    $needsRender = $true
+                    continue
+                }
+                if ($command -eq 'c') {
+                    Clear-AgentNotificationEvents -StateRoot $StateRoot
+                    $events = @()
+                    $inputBuffer = ''
+                    $notice = ''
+                    $lastSignature = ''
+                    $needsRender = $true
+                    continue
+                }
                 $selection = 0
                 $event = $null
                 if ([string]::IsNullOrEmpty($inputBuffer)) {
@@ -162,10 +164,16 @@ try {
                 $needsRender = $true
                 continue
             }
-            if ([char]::IsDigit($key.KeyChar)) {
+            if ([char]::IsDigit($key.KeyChar) -and $inputBuffer -notmatch '^[dcq]$') {
                 $inputBuffer += $key.KeyChar
                 $notice = ''
                 Write-Host $key.KeyChar -NoNewline -ForegroundColor Green
+                continue
+            }
+            if ([string]::IsNullOrEmpty($inputBuffer) -and "$($key.KeyChar)" -match '^[dDcCqQ]$') {
+                $inputBuffer = "$($key.KeyChar)".ToLowerInvariant()
+                $notice = ''
+                Write-Host $inputBuffer -NoNewline -ForegroundColor Green
             }
         }
 

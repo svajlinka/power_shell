@@ -158,6 +158,10 @@ try {
     Assert-True ($centerSource -match 'Set-AllAgentNotificationsHandled') 'Notification pane is missing the done-all shortcut'
     Assert-True ($centerSource -match 'IsNullOrEmpty\(\$inputBuffer\)[\s\S]+?\$selection = 1') 'Blank Enter does not default to the latest notification'
     Assert-True ($centerSource -match 'Enter = latest') 'Notification help does not advertise the blank-Enter shortcut'
+    Assert-True ($centerSource -notmatch '\$key\.Key -eq \[ConsoleKey\]::[DCQ]') 'A letter command still executes before Enter'
+    Assert-True ($centerSource -match '\$command -eq ''d''[\s\S]+?Set-AllAgentNotificationsHandled') 'Done-all is not dispatched by Enter'
+    Assert-True ($centerSource -match '\$command -eq ''c''[\s\S]+?Clear-AgentNotificationEvents') 'Clear is not dispatched by Enter'
+    Assert-True ($centerSource -match '\$command -eq ''q''\) \{ break \}') 'Close is not dispatched by Enter'
     $profileSource = Get-Content -Raw -LiteralPath $profilePath
     Assert-True ($profileSource -match "---==\[ Project Launcher \]==---") 'Project launcher is missing its matching cyan banner title'
 
