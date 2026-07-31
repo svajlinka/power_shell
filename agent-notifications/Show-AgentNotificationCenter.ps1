@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'AgentNotifications.psm1') -Force -DisableNameChecking
 
 $created = $false
-$centerMutex = New-Object System.Threading.Mutex($true, 'Local\AgentNotifications.Center', [ref]$created)
+$centerMutex = New-Object System.Threading.Mutex($true, 'Local\AgentNotifications.ControlCenter.Notifications', [ref]$created)
 if (-not $created) {
     $centerMutex.Dispose()
     return

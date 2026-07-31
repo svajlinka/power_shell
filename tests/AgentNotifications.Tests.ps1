@@ -4,6 +4,7 @@ $modulePath = Join-Path $repoRoot 'agent-notifications\AgentNotifications.psm1'
 $receiverPath = Join-Path $repoRoot 'agent-notifications\Receive-AgentNotification.ps1'
 $installerPath = Join-Path $repoRoot 'agent-notifications\Install-AgentNotifications.ps1'
 Import-Module $modulePath -Force -DisableNameChecking
+. (Join-Path $repoRoot 'powershell-profile.ps1')
 
 $script:Assertions = 0
 function Assert-Equal {
@@ -71,6 +72,18 @@ try {
     $parsedClaude = Get-Content -Raw -LiteralPath $claudeSettings | ConvertFrom-Json
     Assert-True ($null -ne $parsedClaude.hooks.Notification) 'Claude notification hook is missing'
     Assert-True ($null -ne $parsedClaude.hooks.Stop) 'Claude stop hook is missing'
+
+    $freshControl = Get-AgentControlCenterArguments -LauncherRunning $false -NotificationsRunning $false
+    Assert-True ($freshControl -match 'new-tab --title Projects') 'Fresh control center does not create the launcher pane first'
+    Assert-True ($freshControl -match 'sp -V -s 0\.5 --title Notifications') 'Fresh control center does not create an equal notification split'
+    $existingControl = Get-AgentControlCenterArguments -LauncherRunning $true -NotificationsRunning $true
+    Assert-Equal $existingControl '-w agent-control-center focus-tab -t 0' 'Existing control center is not focused without adding panes'
+    $missingNotifications = Get-AgentControlCenterArguments -LauncherRunning $true -NotificationsRunning $false
+    Assert-True ($missingNotifications -match '--title Notifications') 'Missing notification pane is not restored'
+    Assert-True ($missingNotifications -notmatch '--title Projects') 'Restoring notifications also creates a launcher pane'
+    $missingLauncher = Get-AgentControlCenterArguments -LauncherRunning $false -NotificationsRunning $true
+    Assert-True ($missingLauncher -match '--title Projects') 'Missing launcher pane is not restored'
+    Assert-True ($missingLauncher -match 'swap-pane left') 'Restored launcher pane is not moved to the left column'
 
     $oldEnabled = $env:AI_NOTIFY_ENABLED
     $oldSource = $env:AI_NOTIFY_SOURCE

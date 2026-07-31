@@ -32,16 +32,43 @@ function Test-NamedMutexExists {
     }
 }
 
-function Start-AgentNotificationCenter {
-    $configuration = Get-AgentNotificationConfiguration
-    if (Test-NamedMutexExists -Name 'Local\AgentNotifications.Center') {
-        Start-Process wt.exe -ArgumentList @('-w', 'agent-notification-center', 'focus-tab', '-t', '0')
-        return $true
-    }
+function ConvertTo-EncodedPowerShellCommand {
+    param([Parameter(Mandatory = $true)][string]$Script)
 
+    return [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Script))
+}
+
+function Get-AgentControlCenterArguments {
+    param(
+        [Parameter(Mandatory = $true)][bool]$LauncherRunning,
+        [Parameter(Mandatory = $true)][bool]$NotificationsRunning
+    )
+
+    $configuration = Get-AgentNotificationConfiguration
+    $profilePath = Join-Path $script:PowerShellToolsRoot 'powershell-profile.ps1'
+    $launcherScript = ". '" + ($profilePath -replace "'", "''") + "'; Show-ProjectLauncher"
     $centerScript = "& '" + ($configuration.CenterScript -replace "'", "''") + "'"
-    $encodedCenterScript = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($centerScript))
-    $terminalArguments = '-w agent-notification-center new-tab --title Agent-Notifications powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand {0}' -f $encodedCenterScript
+    $launcherEncoded = ConvertTo-EncodedPowerShellCommand -Script $launcherScript
+    $centerEncoded = ConvertTo-EncodedPowerShellCommand -Script $centerScript
+    $launcherCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $launcherEncoded"
+    $centerCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $centerEncoded"
+
+    if ($LauncherRunning -and $NotificationsRunning) {
+        return '-w agent-control-center focus-tab -t 0'
+    }
+    if ($LauncherRunning) {
+        return "-w agent-control-center focus-tab -t 0 ; sp -V -s 0.5 --title Notifications $centerCommand ; mf first"
+    }
+    if ($NotificationsRunning) {
+        return "-w agent-control-center focus-tab -t 0 ; sp -V -s 0.5 --title Projects $launcherCommand ; swap-pane left ; mf first"
+    }
+    return "-w agent-control-center new-tab --title Projects $launcherCommand ; sp -V -s 0.5 --title Notifications $centerCommand ; mf first"
+}
+
+function Start-AgentControlCenter {
+    $launcherRunning = Test-NamedMutexExists -Name 'Local\AgentNotifications.ProjectLauncher'
+    $notificationsRunning = Test-NamedMutexExists -Name 'Local\AgentNotifications.ControlCenter.Notifications'
+    $terminalArguments = Get-AgentControlCenterArguments -LauncherRunning $launcherRunning -NotificationsRunning $notificationsRunning
     Start-Process wt.exe -ArgumentList $terminalArguments
     return $true
 }
@@ -94,7 +121,6 @@ function Start-ProjectWindow {
         return
     }
 
-    [void](Start-AgentNotificationCenter)
     $windowName = 'agent-project-' + [guid]::NewGuid().ToString('N')
     $guardName = 'Local\AgentNotifications.Project.' + $windowName
     $q     = '"{0}"' -f $ProfileName
@@ -143,15 +169,15 @@ function Test-AgentNotification {
         $env:AI_NOTIFY_SOURCE = 'Test'
         $env:AI_NOTIFY_PANE = '0'
         $env:AI_NOTIFY_PROJECT = 'Notification smoke test'
-        $env:AI_NOTIFY_WINDOW = 'agent-notification-center'
-        $env:AI_NOTIFY_GUARD = 'Local\AgentNotifications.Center'
+        $env:AI_NOTIFY_WINDOW = 'agent-control-center'
+        $env:AI_NOTIFY_GUARD = 'Local\AgentNotifications.ControlCenter.Notifications'
         $payload = if ($Type -eq 'approval') {
             '{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"description":"Test approval required"}}'
         } else {
             '{"hook_event_name":"Stop","last_assistant_message":"Test turn finished successfully"}'
         }
         $payload | & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $receiver | Out-Null
-        [void](Start-AgentNotificationCenter)
+        [void](Start-AgentControlCenter)
     } finally {
         foreach ($name in $oldValues.Keys) {
             [Environment]::SetEnvironmentVariable($name, $oldValues[$name], 'Process')
@@ -166,7 +192,15 @@ function Get-ProjectProfileName {
     return "$folderName (d $Path)"
 }
 
-function projects {
+function Show-ProjectLauncher {
+    $created = $false
+    $launcherMutex = New-Object System.Threading.Mutex($true, 'Local\AgentNotifications.ProjectLauncher', [ref]$created)
+    if (-not $created) {
+        $launcherMutex.Dispose()
+        return
+    }
+
+    try {
     $settingsFile = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
 
     if (-not (Test-Path $settingsFile)) {
@@ -296,6 +330,14 @@ function projects {
             }
         }
     }
+    } finally {
+        $launcherMutex.ReleaseMutex()
+        $launcherMutex.Dispose()
+    }
+}
+
+function projects {
+    [void](Start-AgentControlCenter)
 }
 
 Set-Alias p projects
