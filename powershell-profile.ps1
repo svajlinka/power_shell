@@ -101,11 +101,38 @@ function New-AgentPaneEncodedCommand {
     return [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($paneScript))
 }
 
+function Get-ProjectWindowName {
+    param([Parameter(Mandatory = $true)][string]$ProfileGuid)
+
+    $normalizedGuid = $ProfileGuid.Trim().Trim('{', '}').Replace('-', '').ToLowerInvariant()
+    if ($normalizedGuid -notmatch '^[0-9a-f]{32}$') {
+        throw "Invalid Windows Terminal profile GUID: $ProfileGuid"
+    }
+    return "agent-project-$normalizedGuid"
+}
+
+function Get-UniqueProjectChoices {
+    param([AllowEmptyString()][string]$Answer)
+
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    return @($Answer -split '[,\s]+' | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_) -and $seen.Add($_)
+    })
+}
+
 function Start-ProjectWindow {
     param(
-        [string]$ProfileName,
+        [Parameter(Mandatory = $true)][string]$ProfileName,
+        [Parameter(Mandatory = $true)][string]$ProfileGuid,
         [string[]]$Commands = @('codex', 'codex', 'claude', 'claude')  # left to right
     )
+
+    $windowName = Get-ProjectWindowName -ProfileGuid $ProfileGuid
+    $guardName = 'Local\AgentNotifications.Project.' + $windowName
+    if (Test-NamedMutexExists -Name $guardName) {
+        Start-Process wt.exe -ArgumentList "-w $windowName focus-tab -t 0"
+        return
+    }
 
     $configuration = Get-AgentNotificationConfiguration
     if (-not (Test-Path -LiteralPath $configuration.CodexProfile) -or
@@ -121,8 +148,6 @@ function Start-ProjectWindow {
         return
     }
 
-    $windowName = 'agent-project-' + [guid]::NewGuid().ToString('N')
-    $guardName = 'Local\AgentNotifications.Project.' + $windowName
     $q     = '"{0}"' -f $ProfileName
     $parts = @()
 
@@ -321,9 +346,10 @@ function Show-ProjectLauncher {
             continue
         }
 
-        foreach ($choice in ($answer -split '[,\s]+' | Where-Object { $_ })) {
+        foreach ($choice in (Get-UniqueProjectChoices -Answer $answer)) {
             if ($choice -match '^\d+$' -and [int]$choice -ge 1 -and [int]$choice -le $list.Count) {
-                Start-ProjectWindow -ProfileName $list[[int]$choice - 1].name
+                $profile = $list[[int]$choice - 1]
+                Start-ProjectWindow -ProfileName $profile.name -ProfileGuid "$($profile.guid)"
                 Start-Sleep -Milliseconds 300
             } else {
                 Write-Warning "Invalid: $choice"

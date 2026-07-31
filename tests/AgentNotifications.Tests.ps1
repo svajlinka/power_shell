@@ -85,6 +85,33 @@ try {
     Assert-True ($missingLauncher -match '--title Projects') 'Missing launcher pane is not restored'
     Assert-True ($missingLauncher -match 'swap-pane left') 'Restored launcher pane is not moved to the left column'
 
+    $projectGuid = '{1A5FF801-DEAD-BEEF-8123-0123456789AB}'
+    $projectWindow = Get-ProjectWindowName -ProfileGuid $projectGuid
+    Assert-Equal $projectWindow 'agent-project-1a5ff801deadbeef81230123456789ab' 'Project window identity is not stable and normalized'
+    Assert-Equal (Get-ProjectWindowName -ProfileGuid $projectGuid) $projectWindow 'Repeated project identity generation changed the window name'
+    $otherWindow = Get-ProjectWindowName -ProfileGuid '{2A5FF801-DEAD-BEEF-8123-0123456789AB}'
+    Assert-True ($otherWindow -ne $projectWindow) 'Different project profiles received the same window name'
+    Assert-Equal ((Get-UniqueProjectChoices -Answer '3 1,3 2 1') -join ',') '3,1,2' 'Repeated project choices were not deduplicated in input order'
+    $invalidGuidFailed = $false
+    try { [void](Get-ProjectWindowName -ProfileGuid 'not-a-guid') } catch { $invalidGuidFailed = $true }
+    Assert-True $invalidGuidFailed 'Invalid project GUID was accepted'
+
+    $focusGuardName = 'Local\AgentNotifications.Project.' + $projectWindow
+    $focusGuard = New-Object System.Threading.Mutex($false, $focusGuardName)
+    $script:CapturedStartProcess = $null
+    function Start-Process {
+        param([string]$FilePath, [object]$ArgumentList)
+        $script:CapturedStartProcess = [pscustomobject]@{ FilePath = $FilePath; ArgumentList = "$ArgumentList" }
+    }
+    try {
+        Start-ProjectWindow -ProfileName 'Existing project' -ProfileGuid $projectGuid
+        Assert-Equal $script:CapturedStartProcess.FilePath 'wt.exe' 'Existing project did not target Windows Terminal'
+        Assert-Equal $script:CapturedStartProcess.ArgumentList "-w $projectWindow focus-tab -t 0" 'Existing project did not emit only the focus command'
+    } finally {
+        Remove-Item -LiteralPath Function:\Start-Process
+        $focusGuard.Dispose()
+    }
+
     $oldEnabled = $env:AI_NOTIFY_ENABLED
     $oldSource = $env:AI_NOTIFY_SOURCE
     $oldProject = $env:AI_NOTIFY_PROJECT
