@@ -49,6 +49,7 @@ try {
         $trackedFiles = @(
             $eventFile,
             (Join-Path $env:USERPROFILE '.codex\session_index.jsonl'),
+            (Join-Path $env:USERPROFILE '.codex\history.jsonl'),
             (Join-Path $env:USERPROFILE '.claude\history.jsonl')
         )
         $signature = (($trackedFiles | ForEach-Object {

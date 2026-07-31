@@ -132,6 +132,7 @@ function Get-AgentNotificationChatName {
     param(
         [Parameter(Mandatory = $true)][object]$Event,
         [string]$CodexSessionIndexPath,
+        [string]$CodexHistoryPath,
         [string]$ClaudeHistoryPath
     )
 
@@ -140,21 +141,40 @@ function Get-AgentNotificationChatName {
     if ([string]::IsNullOrWhiteSpace($CodexSessionIndexPath)) {
         $CodexSessionIndexPath = Join-Path $env:USERPROFILE '.codex\session_index.jsonl'
     }
+    if ([string]::IsNullOrWhiteSpace($CodexHistoryPath)) {
+        $CodexHistoryPath = Join-Path $env:USERPROFILE '.codex\history.jsonl'
+    }
     if ([string]::IsNullOrWhiteSpace($ClaudeHistoryPath)) {
         $ClaudeHistoryPath = Join-Path $env:USERPROFILE '.claude\history.jsonl'
     }
 
     $name = ''
-    if (-not [string]::IsNullOrWhiteSpace($sessionId) -and $source -eq 'Codex' -and (Test-Path -LiteralPath $CodexSessionIndexPath)) {
-        foreach ($line in [IO.File]::ReadAllLines($CodexSessionIndexPath, [Text.Encoding]::UTF8)) {
-            if ([string]::IsNullOrWhiteSpace($line)) { continue }
-            try {
-                $record = $line | ConvertFrom-Json
-                if ("$(Get-AgentNotificationProperty $record 'id')" -eq $sessionId) {
-                    $candidate = "$(Get-AgentNotificationProperty $record 'thread_name')".Trim()
-                    if (-not [string]::IsNullOrWhiteSpace($candidate)) { $name = $candidate }
-                }
-            } catch { }
+    if (-not [string]::IsNullOrWhiteSpace($sessionId) -and $source -eq 'Codex') {
+        if (Test-Path -LiteralPath $CodexSessionIndexPath) {
+            foreach ($line in [IO.File]::ReadAllLines($CodexSessionIndexPath, [Text.Encoding]::UTF8)) {
+                if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                try {
+                    $record = $line | ConvertFrom-Json
+                    if ("$(Get-AgentNotificationProperty $record 'id')" -eq $sessionId) {
+                        $candidate = "$(Get-AgentNotificationProperty $record 'thread_name')".Trim()
+                        if (-not [string]::IsNullOrWhiteSpace($candidate)) { $name = $candidate }
+                    }
+                } catch { }
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($name) -and (Test-Path -LiteralPath $CodexHistoryPath)) {
+            foreach ($line in [IO.File]::ReadLines($CodexHistoryPath, [Text.Encoding]::UTF8)) {
+                if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                try {
+                    $record = $line | ConvertFrom-Json
+                    $candidate = "$(Get-AgentNotificationProperty $record 'text')".Trim()
+                    if ("$(Get-AgentNotificationProperty $record 'session_id')" -eq $sessionId -and
+                        -not [string]::IsNullOrWhiteSpace($candidate) -and -not $candidate.StartsWith('/')) {
+                        $name = $candidate
+                        break
+                    }
+                } catch { }
+            }
         }
     } elseif (-not [string]::IsNullOrWhiteSpace($sessionId) -and $source -eq 'Claude' -and (Test-Path -LiteralPath $ClaudeHistoryPath)) {
         foreach ($line in [IO.File]::ReadAllLines($ClaudeHistoryPath, [Text.Encoding]::UTF8)) {
@@ -223,6 +243,7 @@ function Format-AgentNotificationDisplayLine {
         [Parameter(Mandatory = $true)][object]$Event,
         [Parameter(Mandatory = $true)][int]$Number,
         [string]$CodexSessionIndexPath,
+        [string]$CodexHistoryPath,
         [string]$ClaudeHistoryPath
     )
 
@@ -230,7 +251,7 @@ function Format-AgentNotificationDisplayLine {
     $time = ([DateTimeOffset]::Parse("$timestamp")).ToLocalTime().ToString('HH:mm:ss')
     $project = Get-AgentNotificationProjectName -Event $Event
     $chat = Get-AgentNotificationChatName -Event $Event -CodexSessionIndexPath $CodexSessionIndexPath `
-        -ClaudeHistoryPath $ClaudeHistoryPath
+        -CodexHistoryPath $CodexHistoryPath -ClaudeHistoryPath $ClaudeHistoryPath
     return '{0,3}  {1}  {2}  {3}' -f $Number, $time, $project, $chat
 }
 

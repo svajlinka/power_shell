@@ -33,6 +33,7 @@ $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('agent-notifications-tests-' +
 $stateRoot = Join-Path $testRoot 'state'
 $codexHome = Join-Path $testRoot 'codex'
 $codexIndex = Join-Path $testRoot 'session_index.jsonl'
+$codexHistory = Join-Path $testRoot 'codex-history.jsonl'
 $claudeHistory = Join-Path $testRoot 'history.jsonl'
 
 try {
@@ -57,8 +58,22 @@ try {
         '{"id":"other-session","thread_name":"Ignore me"}',
         '{"id":"codex-session","thread_name":"Fixa räksmörgåsen"}'
     ) | Set-Content -LiteralPath $codexIndex -Encoding UTF8
-    Assert-Equal (Get-AgentNotificationChatName -Event $approval -CodexSessionIndexPath $codexIndex -ClaudeHistoryPath $claudeHistory) `
+    @(
+        '{"session_id":"codex-session","text":"History title must not override the index"}',
+        '{"session_id":"history-session","text":"/plan"}',
+        '{not valid json}',
+        '{"session_id":"other-session","text":"Ignore unrelated history"}',
+        '{"session_id":"history-session","text":"Första riktiga frågan"}',
+        '{"session_id":"history-session","text":"Later request"}'
+    ) | Set-Content -LiteralPath $codexHistory -Encoding UTF8
+    Assert-Equal (Get-AgentNotificationChatName -Event $approval -CodexSessionIndexPath $codexIndex `
+        -CodexHistoryPath $codexHistory -ClaudeHistoryPath $claudeHistory) `
         'Fixa räksmörgåsen' 'Codex chat name was not read as UTF-8 from the latest session index entry'
+    $historyEvent = [pscustomobject]@{ source = 'Codex'; sessionId = 'history-session' }
+    Assert-Equal (Get-AgentNotificationChatName -Event $historyEvent `
+        -CodexSessionIndexPath (Join-Path $testRoot 'missing-index.jsonl') `
+        -CodexHistoryPath $codexHistory -ClaudeHistoryPath $claudeHistory) `
+        'Första riktiga frågan' 'Unindexed Codex chat did not use its first meaningful history request'
 
     $profiles = @(
         [pscustomobject]@{ name = 'sample-project'; guid = '{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}'; startingDirectory = 'C:\dev\sample-project' },
@@ -84,10 +99,12 @@ try {
         '{"display":"Build the notification center","sessionId":"claude-session"}',
         '{"display":"Later prompt","sessionId":"claude-session"}'
     ) | Set-Content -LiteralPath $claudeHistory -Encoding UTF8
-    Assert-Equal (Get-AgentNotificationChatName -Event $inputEvent -CodexSessionIndexPath $codexIndex -ClaudeHistoryPath $claudeHistory) `
+    Assert-Equal (Get-AgentNotificationChatName -Event $inputEvent -CodexSessionIndexPath $codexIndex `
+        -CodexHistoryPath $codexHistory -ClaudeHistoryPath $claudeHistory) `
         'Build the notification center' 'Claude chat name did not use the first non-command prompt'
     Assert-Equal (Get-AgentNotificationChatName -Event ([pscustomobject]@{ source = 'Codex' }) `
-        -CodexSessionIndexPath $codexIndex -ClaudeHistoryPath $claudeHistory) 'Codex chat' 'Legacy notification did not receive a safe chat fallback'
+        -CodexSessionIndexPath $codexIndex -CodexHistoryPath $codexHistory `
+        -ClaudeHistoryPath $claudeHistory) 'Codex chat' 'Legacy notification did not receive a safe chat fallback'
 
     $manyEvents = @(1..35 | ForEach-Object { [pscustomobject]@{ id = "event-$_" } })
     $displayEvents = @(Get-AgentNotificationDisplayEvents -Events $manyEvents)
@@ -123,7 +140,7 @@ try {
     Assert-True (Test-AgentNotificationHandled -Event $events[0]) 'Handled state did not persist after rereading the event log'
     Assert-True (-not (Test-AgentNotificationHandled -Event ([pscustomobject]@{ id = 'legacy' }))) 'Legacy notification without handled state was not treated as unhandled'
     $compactLine = Format-AgentNotificationDisplayLine -Event $events[0] -Number 1 `
-        -CodexSessionIndexPath $codexIndex -ClaudeHistoryPath $claudeHistory
+        -CodexSessionIndexPath $codexIndex -CodexHistoryPath $codexHistory -ClaudeHistoryPath $claudeHistory
     Assert-True ($compactLine -match '^\s*1\s+\d{2}:\d{2}:\d{2}\s+sample-project\s+Fixa räksmörgåsen$') 'Compact notification row did not contain only number, time, project, and chat name'
     Assert-True ($compactLine -notmatch 'Codex|approval|pane|Run tests|C:\\') 'Compact notification row leaked hidden routing or message details'
 

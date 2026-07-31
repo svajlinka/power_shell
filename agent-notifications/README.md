@@ -20,6 +20,7 @@ On the first launcher-created Codex session, run `/hooks` and trust the `Permiss
 - Enter an event number in the right pane to focus its original chat.
 - Notifications are shown oldest-to-newest from top to bottom, with the latest event numbered `1` at the bottom.
 - Each row contains only its number, time, short project name, and best available chat name.
+- Codex rows use the indexed chat title when available, otherwise the conversation's first meaningful request.
 - Unhandled notifications are yellow. A notification turns blue after selecting it successfully focuses or resumes its chat.
 - If that project window was closed, selecting a new event rebuilds the four-pane layout and resumes its exact Codex or Claude chat in the original pane.
 - Older events without a saved session ID fall back to focusing or reopening the project.
