@@ -18,6 +18,9 @@ On the first launcher-created Codex session, run `/hooks` and trust the `Permiss
 - Enter a project number in the left pane to launch its four-agent project window.
 - Selecting an already-open project focuses its existing window instead of launching another one.
 - Enter an event number in the right pane to focus its project window.
+- Notifications are shown newest-first, so `1` is always the latest event.
+- Each row contains only its number, time, short project name, and best available chat name.
+- Unhandled notifications are yellow. A notification turns blue after selecting it successfully focuses or reopens its project.
 - If that project window was closed, selecting its event reopens it through the same four-pane launcher path.
 - Press `c` with an empty notification selection to clear the history.
 - Press `q` in either pane to close that pane; the next `p` restores any missing pane.

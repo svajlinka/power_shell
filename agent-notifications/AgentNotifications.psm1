@@ -102,6 +102,7 @@ function ConvertTo-AgentNotificationEvent {
     $pane = 0
     [void][int]::TryParse("$($Metadata.Pane)", [ref]$pane)
     $profileGuid = if ($Metadata.ContainsKey('ProfileGuid')) { $Metadata.ProfileGuid } else { '' }
+    $sessionId = Get-AgentNotificationProperty -InputObject $InputObject -Name 'session_id'
 
     return [pscustomobject][ordered]@{
         id        = [guid]::NewGuid().ToString('N')
@@ -114,7 +115,98 @@ function ConvertTo-AgentNotificationEvent {
         window    = ConvertTo-AgentNotificationPreview -Value $Metadata.Window -MaximumLength 100
         guard     = ConvertTo-AgentNotificationPreview -Value $Metadata.Guard -MaximumLength 180
         message   = ConvertTo-AgentNotificationPreview -Value $message -MaximumLength 160
+        sessionId = ConvertTo-AgentNotificationPreview -Value $sessionId -MaximumLength 100
+        handled   = $false
     }
+}
+
+function Get-AgentNotificationProjectName {
+    param([AllowNull()][object]$Event)
+
+    $project = "$(Get-AgentNotificationProperty -InputObject $Event -Name 'project')".Trim()
+    if ([string]::IsNullOrWhiteSpace($project)) { return 'Unknown project' }
+    return ($project -replace '\s+\(d\s+.+\)$', '').Trim()
+}
+
+function Get-AgentNotificationChatName {
+    param(
+        [Parameter(Mandatory = $true)][object]$Event,
+        [string]$CodexSessionIndexPath,
+        [string]$ClaudeHistoryPath
+    )
+
+    $source = "$(Get-AgentNotificationProperty -InputObject $Event -Name 'source')".Trim()
+    $sessionId = "$(Get-AgentNotificationProperty -InputObject $Event -Name 'sessionId')".Trim()
+    if ([string]::IsNullOrWhiteSpace($CodexSessionIndexPath)) {
+        $CodexSessionIndexPath = Join-Path $env:USERPROFILE '.codex\session_index.jsonl'
+    }
+    if ([string]::IsNullOrWhiteSpace($ClaudeHistoryPath)) {
+        $ClaudeHistoryPath = Join-Path $env:USERPROFILE '.claude\history.jsonl'
+    }
+
+    $name = ''
+    if (-not [string]::IsNullOrWhiteSpace($sessionId) -and $source -eq 'Codex' -and (Test-Path -LiteralPath $CodexSessionIndexPath)) {
+        foreach ($line in [IO.File]::ReadAllLines($CodexSessionIndexPath, [Text.Encoding]::UTF8)) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            try {
+                $record = $line | ConvertFrom-Json
+                if ("$(Get-AgentNotificationProperty $record 'id')" -eq $sessionId) {
+                    $candidate = "$(Get-AgentNotificationProperty $record 'thread_name')".Trim()
+                    if (-not [string]::IsNullOrWhiteSpace($candidate)) { $name = $candidate }
+                }
+            } catch { }
+        }
+    } elseif (-not [string]::IsNullOrWhiteSpace($sessionId) -and $source -eq 'Claude' -and (Test-Path -LiteralPath $ClaudeHistoryPath)) {
+        foreach ($line in [IO.File]::ReadAllLines($ClaudeHistoryPath, [Text.Encoding]::UTF8)) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            try {
+                $record = $line | ConvertFrom-Json
+                $candidate = "$(Get-AgentNotificationProperty $record 'display')".Trim()
+                if ("$(Get-AgentNotificationProperty $record 'sessionId')" -eq $sessionId -and
+                    -not [string]::IsNullOrWhiteSpace($candidate) -and -not $candidate.StartsWith('/')) {
+                    $name = $candidate
+                    break
+                }
+            } catch { }
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($name)) {
+        $name = if ([string]::IsNullOrWhiteSpace($source)) { 'Agent chat' } else { "$source chat" }
+    }
+    return ConvertTo-AgentNotificationPreview -Value $name -MaximumLength 60
+}
+
+function Get-AgentNotificationDisplayEvents {
+    param([object[]]$Events, [int]$MaximumCount = 30)
+
+    if ($null -eq $Events -or $Events.Count -eq 0 -or $MaximumCount -le 0) { return @() }
+    $visible = @($Events | Select-Object -Last $MaximumCount)
+    [array]::Reverse($visible)
+    return $visible
+}
+
+function Test-AgentNotificationHandled {
+    param([AllowNull()][object]$Event)
+
+    $value = Get-AgentNotificationProperty -InputObject $Event -Name 'handled'
+    return ($null -ne $value -and [bool]$value)
+}
+
+function Format-AgentNotificationDisplayLine {
+    param(
+        [Parameter(Mandatory = $true)][object]$Event,
+        [Parameter(Mandatory = $true)][int]$Number,
+        [string]$CodexSessionIndexPath,
+        [string]$ClaudeHistoryPath
+    )
+
+    $timestamp = Get-AgentNotificationProperty -InputObject $Event -Name 'timestamp'
+    $time = ([DateTimeOffset]::Parse("$timestamp")).ToLocalTime().ToString('HH:mm:ss')
+    $project = Get-AgentNotificationProjectName -Event $Event
+    $chat = Get-AgentNotificationChatName -Event $Event -CodexSessionIndexPath $CodexSessionIndexPath `
+        -ClaudeHistoryPath $ClaudeHistoryPath
+    return '{0,3}  {1}  {2}  {3}' -f $Number, $time, $project, $chat
 }
 
 function Find-AgentNotificationProjectProfile {
@@ -211,6 +303,56 @@ function Clear-AgentNotificationEvents {
     }
 }
 
+function Set-AgentNotificationHandled {
+    param(
+        [Parameter(Mandatory = $true)][string]$EventId,
+        [string]$StateRoot
+    )
+
+    $root = Get-AgentNotificationStateRoot -StateRoot $StateRoot
+    $eventFile = Join-Path $root 'events.jsonl'
+    if (-not (Test-Path -LiteralPath $eventFile)) { return $false }
+
+    $mutex = New-Object System.Threading.Mutex($false, 'Local\AgentNotifications.EventLog')
+    $hasLock = $false
+    $updated = $false
+    try {
+        try {
+            $hasLock = $mutex.WaitOne(5000)
+        } catch [System.Threading.AbandonedMutexException] {
+            $hasLock = $true
+        }
+        if (-not $hasLock) { throw 'Timed out waiting for the notification event log.' }
+
+        $output = New-Object System.Collections.Generic.List[string]
+        foreach ($line in [IO.File]::ReadAllLines($eventFile, [Text.Encoding]::UTF8)) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            try {
+                $event = $line | ConvertFrom-Json
+                if ("$(Get-AgentNotificationProperty $event 'id')" -eq $EventId) {
+                    $event | Add-Member -NotePropertyName handled -NotePropertyValue $true -Force
+                    $line = $event | ConvertTo-Json -Compress -Depth 8
+                    $updated = $true
+                }
+            } catch { }
+            $output.Add($line)
+        }
+        if ($updated) {
+            $temporaryFile = Join-Path $root ('.events-' + [guid]::NewGuid().ToString('N') + '.tmp')
+            try {
+                [IO.File]::WriteAllLines($temporaryFile, $output.ToArray(), (New-Object Text.UTF8Encoding($false)))
+                Move-Item -LiteralPath $temporaryFile -Destination $eventFile -Force
+            } finally {
+                if (Test-Path -LiteralPath $temporaryFile) { Remove-Item -LiteralPath $temporaryFile -Force }
+            }
+        }
+    } finally {
+        if ($hasLock) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
+    }
+    return $updated
+}
+
 function Show-AgentNotificationToast {
     param([Parameter(Mandatory = $true)][object]$Event)
 
@@ -249,10 +391,16 @@ Export-ModuleMember -Function @(
     'Get-AgentNotificationStateRoot',
     'ConvertTo-AgentNotificationPreview',
     'ConvertTo-AgentNotificationEvent',
+    'Get-AgentNotificationProjectName',
+    'Get-AgentNotificationChatName',
+    'Get-AgentNotificationDisplayEvents',
+    'Test-AgentNotificationHandled',
+    'Format-AgentNotificationDisplayLine',
     'Find-AgentNotificationProjectProfile',
     'Write-AgentNotificationEvent',
     'Read-AgentNotificationEvents',
     'Clear-AgentNotificationEvents',
+    'Set-AgentNotificationHandled',
     'Show-AgentNotificationToast',
     'Test-AgentNotificationTarget'
 )

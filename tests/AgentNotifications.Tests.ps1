@@ -24,19 +24,33 @@ function Assert-True {
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('agent-notifications-tests-' + [guid]::NewGuid().ToString('N'))
 $stateRoot = Join-Path $testRoot 'state'
 $codexHome = Join-Path $testRoot 'codex'
+$codexIndex = Join-Path $testRoot 'session_index.jsonl'
+$claudeHistory = Join-Path $testRoot 'history.jsonl'
 
 try {
+    [void](New-Item -ItemType Directory -Path $testRoot -Force)
     $metadata = @{
         Enabled = '1'; Source = 'Codex'; Project = 'sample-project'; Pane = '2'
         ProfileGuid = '{11111111-2222-3333-4444-555555555555}'
         Window = 'agent-project-123'; Guard = 'Local\AgentNotifications.Project.123'
     }
-    $approvalPayload = '{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"description":"Run tests\r\nwith approval"}}' | ConvertFrom-Json
+    $approvalPayload = '{"hook_event_name":"PermissionRequest","session_id":"codex-session","tool_name":"Bash","tool_input":{"description":"Run tests\r\nwith approval"}}' | ConvertFrom-Json
     $approval = ConvertTo-AgentNotificationEvent -InputObject $approvalPayload -Metadata $metadata
     Assert-Equal $approval.status 'approval' 'Codex permission status was not normalized'
     Assert-Equal $approval.message 'Run tests with approval' 'Approval preview was not sanitized'
     Assert-Equal $approval.pane 2 'Pane number was not retained'
     Assert-Equal $approval.profileGuid $metadata.ProfileGuid 'Project profile GUID was not retained for reopening'
+    Assert-Equal $approval.sessionId 'codex-session' 'Hook session ID was not retained for chat-name lookup'
+    Assert-True (-not $approval.handled) 'New notification was unexpectedly marked handled'
+    Assert-Equal (Get-AgentNotificationProjectName ([pscustomobject]@{ project = 'power_shell (d C:\Users\example\dev\power_shell)' })) 'power_shell' 'Project path was not removed from the compact name'
+
+    @(
+        '{"id":"codex-session","thread_name":"Earlier name"}',
+        '{"id":"other-session","thread_name":"Ignore me"}',
+        '{"id":"codex-session","thread_name":"Fixa räksmörgåsen"}'
+    ) | Set-Content -LiteralPath $codexIndex -Encoding UTF8
+    Assert-Equal (Get-AgentNotificationChatName -Event $approval -CodexSessionIndexPath $codexIndex -ClaudeHistoryPath $claudeHistory) `
+        'Fixa räksmörgåsen' 'Codex chat name was not read as UTF-8 from the latest session index entry'
 
     $profiles = @(
         [pscustomobject]@{ name = 'sample-project'; guid = '{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}'; startingDirectory = 'C:\dev\sample-project' },
@@ -53,10 +67,25 @@ try {
     $missingProfile = Find-AgentNotificationProjectProfile -Event ([pscustomobject]@{ project = 'missing-project' }) -Profiles $profiles
     Assert-True ($null -eq $missingProfile) 'Missing project profile unexpectedly resolved'
 
-    $claudePayload = '{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"Claude is waiting"}' | ConvertFrom-Json
+    $claudePayload = '{"hook_event_name":"Notification","session_id":"claude-session","notification_type":"idle_prompt","message":"Claude is waiting"}' | ConvertFrom-Json
     $metadata.Source = 'Claude'
     $inputEvent = ConvertTo-AgentNotificationEvent -InputObject $claudePayload -Metadata $metadata
     Assert-Equal $inputEvent.status 'input' 'Claude idle prompt was not normalized'
+    @(
+        '{"display":"/compact","sessionId":"claude-session"}',
+        '{"display":"Build the notification center","sessionId":"claude-session"}',
+        '{"display":"Later prompt","sessionId":"claude-session"}'
+    ) | Set-Content -LiteralPath $claudeHistory -Encoding UTF8
+    Assert-Equal (Get-AgentNotificationChatName -Event $inputEvent -CodexSessionIndexPath $codexIndex -ClaudeHistoryPath $claudeHistory) `
+        'Build the notification center' 'Claude chat name did not use the first non-command prompt'
+    Assert-Equal (Get-AgentNotificationChatName -Event ([pscustomobject]@{ source = 'Codex' }) `
+        -CodexSessionIndexPath $codexIndex -ClaudeHistoryPath $claudeHistory) 'Codex chat' 'Legacy notification did not receive a safe chat fallback'
+
+    $manyEvents = @(1..35 | ForEach-Object { [pscustomobject]@{ id = "event-$_" } })
+    $displayEvents = @(Get-AgentNotificationDisplayEvents -Events $manyEvents)
+    Assert-Equal $displayEvents.Count 30 'Notification display was not limited to the latest 30 events'
+    Assert-Equal $displayEvents[0].id 'event-35' 'Display number 1 did not map to the newest notification'
+    Assert-Equal $displayEvents[29].id 'event-6' 'Old notifications were not trimmed from the display'
 
     $stopPayload = [pscustomobject]@{
         hook_event_name = 'Stop'
@@ -76,6 +105,15 @@ try {
     $events = @(Read-AgentNotificationEvents -StateRoot $stateRoot)
     Assert-Equal $events.Count 2 'Event log did not round-trip both events'
     Assert-Equal $events[1].source 'Claude' 'Event log changed event content'
+    Assert-True (-not (Test-AgentNotificationHandled -Event $events[0])) 'Unread notification did not render as unhandled'
+    Assert-True (Set-AgentNotificationHandled -EventId $approval.id -StateRoot $stateRoot) 'Handled notification was not updated'
+    $events = @(Read-AgentNotificationEvents -StateRoot $stateRoot)
+    Assert-True (Test-AgentNotificationHandled -Event $events[0]) 'Handled state did not persist after rereading the event log'
+    Assert-True (-not (Test-AgentNotificationHandled -Event ([pscustomobject]@{ id = 'legacy' }))) 'Legacy notification without handled state was not treated as unhandled'
+    $compactLine = Format-AgentNotificationDisplayLine -Event $events[0] -Number 1 `
+        -CodexSessionIndexPath $codexIndex -ClaudeHistoryPath $claudeHistory
+    Assert-True ($compactLine -match '^\s*1\s+\d{2}:\d{2}:\d{2}\s+sample-project\s+Fixa räksmörgåsen$') 'Compact notification row did not contain only number, time, project, and chat name'
+    Assert-True ($compactLine -notmatch 'Codex|approval|pane|Run tests|C:\\') 'Compact notification row leaked hidden routing or message details'
 
     Clear-AgentNotificationEvents -StateRoot $stateRoot
     Assert-Equal @(Read-AgentNotificationEvents -StateRoot $stateRoot).Count 0 'Clear did not empty notification history'

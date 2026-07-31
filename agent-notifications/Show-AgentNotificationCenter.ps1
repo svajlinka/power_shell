@@ -19,17 +19,15 @@ function Show-Center {
     Write-Host 'Type an event number to focus its project window.  c = clear  q = close' -ForegroundColor DarkGray
     Write-Host ''
 
-    if ($Events.Count -eq 0) {
+    $displayEvents = @(Get-AgentNotificationDisplayEvents -Events $Events)
+    if ($displayEvents.Count -eq 0) {
         Write-Host '  No notifications yet.' -ForegroundColor DarkGray
     } else {
-        $first = [Math]::Max(0, $Events.Count - 30)
-        for ($i = $first; $i -lt $Events.Count; $i++) {
-            $event = $Events[$i]
-            $time = ([DateTimeOffset]::Parse($event.timestamp)).ToLocalTime().ToString('HH:mm:ss')
-            $source = ("$($event.source)").PadRight(6)
-            $status = ("$($event.status)").PadRight(8)
-            $line = '{0,4}  {1}  {2}  {3}  {4}  pane {5}  {6}' -f ($i + 1), $time, $source, $status, $event.project, $event.pane, $event.message
-            Write-Host $line
+        for ($i = 0; $i -lt $displayEvents.Count; $i++) {
+            $event = $displayEvents[$i]
+            $line = Format-AgentNotificationDisplayLine -Event $event -Number ($i + 1)
+            $color = if (Test-AgentNotificationHandled -Event $event) { 'Blue' } else { 'Yellow' }
+            Write-Host $line -ForegroundColor $color
         }
     }
 
@@ -48,10 +46,17 @@ $needsRender = $true
 try {
     while ($true) {
         $eventFile = Join-Path (Get-AgentNotificationStateRoot -StateRoot $StateRoot) 'events.jsonl'
-        $signature = if (Test-Path -LiteralPath $eventFile) {
-            $item = Get-Item -LiteralPath $eventFile
-            "$($item.Length):$($item.LastWriteTimeUtc.Ticks)"
-        } else { 'missing' }
+        $trackedFiles = @(
+            $eventFile,
+            (Join-Path $env:USERPROFILE '.codex\session_index.jsonl'),
+            (Join-Path $env:USERPROFILE '.claude\history.jsonl')
+        )
+        $signature = (($trackedFiles | ForEach-Object {
+            if (Test-Path -LiteralPath $_) {
+                $item = Get-Item -LiteralPath $_
+                "$($item.Length):$($item.LastWriteTimeUtc.Ticks)"
+            } else { 'missing' }
+        }) -join '|')
 
         if ($signature -ne $lastSignature) {
             $events = @(Read-AgentNotificationEvents -StateRoot $StateRoot)
@@ -83,11 +88,14 @@ try {
             }
             if ($key.Key -eq [ConsoleKey]::Enter) {
                 $selection = 0
-                if ([int]::TryParse($inputBuffer, [ref]$selection) -and $selection -ge 1 -and $selection -le $events.Count) {
-                    $event = $events[$selection - 1]
+                $displayEvents = @(Get-AgentNotificationDisplayEvents -Events $events)
+                if ([int]::TryParse($inputBuffer, [ref]$selection) -and $selection -ge 1 -and $selection -le $displayEvents.Count) {
+                    $event = $displayEvents[$selection - 1]
+                    $succeeded = $false
                     if (Test-AgentNotificationTarget -Guard $event.guard) {
                         Start-Process wt.exe -ArgumentList @('-w', $event.window, 'focus-tab', '-t', '0')
                         $notice = "Focused $($event.project); notification came from pane $($event.pane)."
+                        $succeeded = $true
                     } else {
                         try {
                             $settingsFile = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
@@ -99,10 +107,15 @@ try {
                                 Start-ProjectWindow -ProfileName $profile.name -ProfileGuid "$($profile.guid)" `
                                     -ProfilePath $profile.startingDirectory
                                 $notice = "Reopened $($profile.name)."
+                                $succeeded = $true
                             }
                         } catch {
                             $notice = "Could not reopen that project: $($_.Exception.Message)"
                         }
+                    }
+                    if ($succeeded) {
+                        [void](Set-AgentNotificationHandled -EventId $event.id -StateRoot $StateRoot)
+                        $lastSignature = ''
                     }
                 } else {
                     $notice = 'Enter a valid event number.'
