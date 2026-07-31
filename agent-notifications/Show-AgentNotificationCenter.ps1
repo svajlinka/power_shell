@@ -16,16 +16,16 @@ function Show-Center {
 
     Clear-Host
     Write-Host 'Agent Notifications' -ForegroundColor Cyan
-    Write-Host 'Type an event number to focus its project window.  c = clear  q = close' -ForegroundColor DarkGray
+    Write-Host 'Type an event number to open its chat.  c = clear  q = close' -ForegroundColor DarkGray
     Write-Host ''
 
-    $displayEvents = @(Get-AgentNotificationDisplayEvents -Events $Events)
-    if ($displayEvents.Count -eq 0) {
+    $displayEntries = @(Get-AgentNotificationDisplayEntries -Events $Events)
+    if ($displayEntries.Count -eq 0) {
         Write-Host '  No notifications yet.' -ForegroundColor DarkGray
     } else {
-        for ($i = 0; $i -lt $displayEvents.Count; $i++) {
-            $event = $displayEvents[$i]
-            $line = Format-AgentNotificationDisplayLine -Event $event -Number ($i + 1)
+        foreach ($entry in $displayEntries) {
+            $event = $entry.event
+            $line = Format-AgentNotificationDisplayLine -Event $event -Number $entry.number
             $color = if (Test-AgentNotificationHandled -Event $event) { 'Blue' } else { 'Yellow' }
             Write-Host $line -ForegroundColor $color
         }
@@ -88,29 +88,54 @@ try {
             }
             if ($key.Key -eq [ConsoleKey]::Enter) {
                 $selection = 0
-                $displayEvents = @(Get-AgentNotificationDisplayEvents -Events $events)
-                if ([int]::TryParse($inputBuffer, [ref]$selection) -and $selection -ge 1 -and $selection -le $displayEvents.Count) {
-                    $event = $displayEvents[$selection - 1]
+                $event = $null
+                if ([int]::TryParse($inputBuffer, [ref]$selection)) {
+                    $event = Find-AgentNotificationDisplayEvent -Events $events -Number $selection
+                }
+                if ($null -ne $event) {
                     $succeeded = $false
+                    $sessionProperty = $event.PSObject.Properties['sessionId']
+                    $sessionId = if ($null -eq $sessionProperty) { '' } else { "$($sessionProperty.Value)" }
+                    $source = "$($event.source)"
+                    $pane = 0
+                    [void][int]::TryParse("$($event.pane)", [ref]$pane)
+                    $hasExactChat = -not [string]::IsNullOrWhiteSpace($sessionId) -and
+                        $source -in @('Codex', 'Claude') -and $pane -ge 1 -and $pane -le 4
                     if (Test-AgentNotificationTarget -Guard $event.guard) {
-                        Start-Process wt.exe -ArgumentList @('-w', $event.window, 'focus-tab', '-t', '0')
-                        $notice = "Focused $($event.project); notification came from pane $($event.pane)."
+                        if ($hasExactChat) {
+                            Start-Process wt.exe -ArgumentList (Get-AgentPaneFocusArguments -Window $event.window -Pane $pane)
+                            $notice = "Focused the saved $source chat in $($event.project)."
+                        } else {
+                            Start-Process wt.exe -ArgumentList @('-w', $event.window, 'focus-tab', '-t', '0')
+                            $notice = "Focused $($event.project); this older notification has no saved chat ID."
+                        }
                         $succeeded = $true
                     } else {
                         try {
-                            $settingsFile = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
-                            $settings = Get-Content -Raw -LiteralPath $settingsFile | ConvertFrom-Json
-                            $profile = Find-AgentNotificationProjectProfile -Event $event -Profiles @($settings.profiles.list)
-                            if ($null -eq $profile) {
-                                $notice = 'That project profile no longer exists.'
+                            $windowGuard = 'Local\AgentNotifications.Project.' + $event.window
+                            if ($hasExactChat -and (Test-AgentNotificationTarget -Guard $windowGuard)) {
+                                $notice = 'The project is open, but the original chat pane is no longer available.'
                             } else {
-                                Start-ProjectWindow -ProfileName $profile.name -ProfileGuid "$($profile.guid)" `
-                                    -ProfilePath $profile.startingDirectory
-                                $notice = "Reopened $($profile.name)."
-                                $succeeded = $true
+                                $settingsFile = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+                                $settings = Get-Content -Raw -LiteralPath $settingsFile | ConvertFrom-Json
+                                $profile = Find-AgentNotificationProjectProfile -Event $event -Profiles @($settings.profiles.list)
+                                if ($null -eq $profile) {
+                                    $notice = 'That project profile no longer exists.'
+                                } elseif ($hasExactChat) {
+                                    Start-ProjectWindow -ProfileName $profile.name -ProfileGuid "$($profile.guid)" `
+                                        -ProfilePath $profile.startingDirectory -ResumeSource $source `
+                                        -ResumePane $pane -ResumeSessionId $sessionId
+                                    $notice = "Reopened $($profile.name) and resumed the saved $source chat."
+                                    $succeeded = $true
+                                } else {
+                                    Start-ProjectWindow -ProfileName $profile.name -ProfileGuid "$($profile.guid)" `
+                                        -ProfilePath $profile.startingDirectory
+                                    $notice = "Reopened $($profile.name); this older notification has no saved chat ID."
+                                    $succeeded = $true
+                                }
                             }
                         } catch {
-                            $notice = "Could not reopen that project: $($_.Exception.Message)"
+                            $notice = "Could not open that chat: $($_.Exception.Message)"
                         }
                     }
                     if ($succeeded) {

@@ -81,14 +81,15 @@ function New-AgentPaneEncodedCommand {
         [Parameter(Mandatory = $true)][string]$Project,
         [Parameter(Mandatory = $true)][string]$ProfileGuid,
         [Parameter(Mandatory = $true)][string]$Window,
+        [Parameter(Mandatory = $true)][string]$WindowGuard,
         [Parameter(Mandatory = $true)][string]$Guard,
         [string[]]$Arguments = @()
     )
 
-    $escaped = (@($Command, $Source, "$Pane", $Project, $ProfileGuid, $Window, $Guard) + $Arguments) | ForEach-Object {
+    $escaped = (@($Command, $Source, "$Pane", $Project, $ProfileGuid, $Window, $WindowGuard, $Guard) + $Arguments) | ForEach-Object {
         "'" + ("$_" -replace "'", "''") + "'"
     }
-    $argumentText = if ($Arguments.Count -gt 0) { ' ' + ($escaped[7..($escaped.Count - 1)] -join ' ') } else { '' }
+    $argumentText = if ($Arguments.Count -gt 0) { ' ' + ($escaped[8..($escaped.Count - 1)] -join ' ') } else { '' }
     $paneScript = @"
 `$env:AI_NOTIFY_ENABLED = '1'
 `$env:AI_NOTIFY_SOURCE = $($escaped[1])
@@ -96,8 +97,9 @@ function New-AgentPaneEncodedCommand {
 `$env:AI_NOTIFY_PROJECT = $($escaped[3])
 `$env:AI_NOTIFY_PROFILE_GUID = $($escaped[4])
 `$env:AI_NOTIFY_WINDOW = $($escaped[5])
-`$env:AI_NOTIFY_GUARD = $($escaped[6])
+`$env:AI_NOTIFY_GUARD = $($escaped[7])
 `$global:AgentNotificationWindowGuard = New-Object System.Threading.Mutex(`$false, $($escaped[6]))
+`$global:AgentNotificationPaneGuard = New-Object System.Threading.Mutex(`$false, $($escaped[7]))
 & $($escaped[0])$argumentText
 "@
     return [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($paneScript))
@@ -111,6 +113,28 @@ function Get-ProjectWindowName {
         throw "Invalid Windows Terminal profile GUID: $ProfileGuid"
     }
     return "agent-project-$normalizedGuid"
+}
+
+function Get-AgentPaneGuardName {
+    param(
+        [Parameter(Mandatory = $true)][string]$Window,
+        [Parameter(Mandatory = $true)][int]$Pane
+    )
+
+    if ($Pane -lt 1) { throw 'Pane number must be at least 1.' }
+    return "Local\AgentNotifications.Pane.$Window.$Pane"
+}
+
+function Get-AgentPaneFocusArguments {
+    param(
+        [Parameter(Mandatory = $true)][string]$Window,
+        [Parameter(Mandatory = $true)][int]$Pane
+    )
+
+    if ($Pane -lt 1) { throw 'Pane number must be at least 1.' }
+    $parts = @("-w $Window focus-tab -t 0", 'move-focus first')
+    for ($i = 1; $i -lt $Pane; $i++) { $parts += 'move-focus nextInOrder' }
+    return ($parts -join ' ; ')
 }
 
 function Get-ProjectDisplayName {
@@ -143,13 +167,34 @@ function Start-ProjectWindow {
         [Parameter(Mandatory = $true)][string]$ProfileName,
         [Parameter(Mandatory = $true)][string]$ProfileGuid,
         [Parameter(Mandatory = $true)][string]$ProfilePath,
-        [string[]]$Commands = @('codex', 'codex', 'claude', 'claude')  # left to right
+        [string[]]$Commands = @('codex', 'codex', 'claude', 'claude'),  # left to right
+        [ValidateSet('', 'Codex', 'Claude')][string]$ResumeSource = '',
+        [int]$ResumePane = 0,
+        [string]$ResumeSessionId = ''
     )
 
     $windowName = Get-ProjectWindowName -ProfileGuid $ProfileGuid
-    $guardName = 'Local\AgentNotifications.Project.' + $windowName
-    if (Test-NamedMutexExists -Name $guardName) {
-        Start-Process wt.exe -ArgumentList "-w $windowName focus-tab -t 0"
+    $windowGuardName = 'Local\AgentNotifications.Project.' + $windowName
+    $hasResume = -not [string]::IsNullOrWhiteSpace($ResumeSessionId)
+    if ($hasResume) {
+        if ([string]::IsNullOrWhiteSpace($ResumeSource) -or $ResumePane -lt 1 -or $ResumePane -gt $Commands.Count) {
+            throw 'Exact chat resume requires a valid source and original pane number.'
+        }
+        $expectedSource = if ($Commands[$ResumePane - 1] -eq 'codex') { 'Codex' } else { 'Claude' }
+        if ($ResumeSource -ne $expectedSource) {
+            throw "The saved $ResumeSource chat does not match pane $ResumePane ($expectedSource)."
+        }
+    }
+    if (Test-NamedMutexExists -Name $windowGuardName) {
+        if ($hasResume) {
+            $paneGuardName = Get-AgentPaneGuardName -Window $windowName -Pane $ResumePane
+            if (-not (Test-NamedMutexExists -Name $paneGuardName)) {
+                throw 'The project is open, but the original chat pane is no longer available.'
+            }
+            Start-Process wt.exe -ArgumentList (Get-AgentPaneFocusArguments -Window $windowName -Pane $ResumePane)
+        } else {
+            Start-Process wt.exe -ArgumentList "-w $windowName focus-tab -t 0"
+        }
         return
     }
 
@@ -180,8 +225,17 @@ function Start-ProjectWindow {
         } else {
             @('--settings', $configuration.ClaudeSettings)
         }
+        if ($hasResume -and ($i + 1) -eq $ResumePane) {
+            if ($source -eq 'Codex') {
+                $arguments += @('resume', $ResumeSessionId)
+            } else {
+                $arguments += @('--resume', $ResumeSessionId)
+            }
+        }
+        $paneGuardName = Get-AgentPaneGuardName -Window $windowName -Pane ($i + 1)
         $encoded = New-AgentPaneEncodedCommand -Command $commandPath -Source $source -Pane ($i + 1) `
-            -Project $ProfileName -ProfileGuid $ProfileGuid -Window $windowName -Guard $guardName -Arguments $arguments
+            -Project $ProfileName -ProfileGuid $ProfileGuid -Window $windowName -WindowGuard $windowGuardName `
+            -Guard $paneGuardName -Arguments $arguments
         $shell = "powershell.exe -NoExit -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
 
         if ($i -eq 0) {
@@ -195,6 +249,9 @@ function Start-ProjectWindow {
         $parts += "sp -V -s $size --title $quotedTitle -p $q $shell"
     }
     $parts += 'mf first'
+    if ($hasResume) {
+        for ($i = 1; $i -lt $ResumePane; $i++) { $parts += 'mf nextInOrder' }
+    }
 
     Start-Process wt -ArgumentList ($parts -join ' ; ')
 }

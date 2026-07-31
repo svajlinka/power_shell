@@ -17,11 +17,12 @@ On the first launcher-created Codex session, run `/hooks` and trust the `Permiss
 - Repeated `p` calls focus the existing control center instead of opening duplicates.
 - Enter a project number in the left pane to launch its four-agent project window.
 - Selecting an already-open project focuses its existing window instead of launching another one.
-- Enter an event number in the right pane to focus its project window.
-- Notifications are shown newest-first, so `1` is always the latest event.
+- Enter an event number in the right pane to focus its original chat.
+- Notifications are shown oldest-to-newest from top to bottom, with the latest event numbered `1` at the bottom.
 - Each row contains only its number, time, short project name, and best available chat name.
-- Unhandled notifications are yellow. A notification turns blue after selecting it successfully focuses or reopens its project.
-- If that project window was closed, selecting its event reopens it through the same four-pane launcher path.
+- Unhandled notifications are yellow. A notification turns blue after selecting it successfully focuses or resumes its chat.
+- If that project window was closed, selecting a new event rebuilds the four-pane layout and resumes its exact Codex or Claude chat in the original pane.
+- Older events without a saved session ID fall back to focusing or reopening the project.
 - Press `c` with an empty notification selection to clear the history.
 - Press `q` in either pane to close that pane; the next `p` restores any missing pane.
 - Close the Agent Control Center window normally to close both panes together.

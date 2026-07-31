@@ -21,6 +21,14 @@ function Assert-True {
     if (-not $Condition) { throw $Message }
 }
 
+function Get-EmbeddedPowerShellScripts {
+    param([string]$CommandLine)
+
+    return @([regex]::Matches($CommandLine, '-EncodedCommand\s+([A-Za-z0-9+/=]+)') | ForEach-Object {
+        [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($_.Groups[1].Value))
+    })
+}
+
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('agent-notifications-tests-' + [guid]::NewGuid().ToString('N'))
 $stateRoot = Join-Path $testRoot 'state'
 $codexHome = Join-Path $testRoot 'codex'
@@ -84,8 +92,12 @@ try {
     $manyEvents = @(1..35 | ForEach-Object { [pscustomobject]@{ id = "event-$_" } })
     $displayEvents = @(Get-AgentNotificationDisplayEvents -Events $manyEvents)
     Assert-Equal $displayEvents.Count 30 'Notification display was not limited to the latest 30 events'
-    Assert-Equal $displayEvents[0].id 'event-35' 'Display number 1 did not map to the newest notification'
-    Assert-Equal $displayEvents[29].id 'event-6' 'Old notifications were not trimmed from the display'
+    Assert-Equal $displayEvents[0].id 'event-6' 'Visible notifications did not start with the oldest retained event'
+    Assert-Equal $displayEvents[29].id 'event-35' 'Latest notification was not placed at the bottom'
+    $displayEntries = @(Get-AgentNotificationDisplayEntries -Events $manyEvents)
+    Assert-Equal $displayEntries[0].number 30 'Top notification did not receive the oldest visible number'
+    Assert-Equal $displayEntries[29].number 1 'Latest notification at the bottom was not numbered 1'
+    Assert-Equal (Find-AgentNotificationDisplayEvent -Events $manyEvents -Number 1).id 'event-35' 'Selection 1 did not resolve to the latest notification'
 
     $stopPayload = [pscustomobject]@{
         hook_event_name = 'Stop'
@@ -178,6 +190,27 @@ try {
         $titleMatches = [regex]::Matches($script:CapturedProjectLaunch.ArgumentList, '--title "project with spaces"').Count
         Assert-Equal $titleMatches 4 'Not every project pane received the project-only title'
         Assert-True ($script:CapturedProjectLaunch.ArgumentList -notmatch '--title "\d+ (Codex|Claude)"') 'Agent-number title still overrides the project title'
+        $normalScripts = @(Get-EmbeddedPowerShellScripts -CommandLine $script:CapturedProjectLaunch.ArgumentList)
+        Assert-Equal $normalScripts.Count 4 'Project launcher did not create four encoded pane commands'
+        Assert-True ($normalScripts[0] -match 'AgentNotificationWindowGuard') 'Pane did not retain the shared project-window guard'
+        Assert-True ($normalScripts[0] -match 'AgentNotifications\.Pane\.agent-project-[0-9a-f]+\.1') 'First pane did not receive a unique pane guard'
+        Assert-True ($normalScripts[3] -match 'AgentNotifications\.Pane\.agent-project-[0-9a-f]+\.4') 'Fourth pane did not receive a unique pane guard'
+
+        Start-ProjectWindow -ProfileName 'project with spaces (d C:\dev\project with spaces)' `
+            -ProfileGuid '{4A5FF801-DEAD-BEEF-8123-0123456789AB}' -ProfilePath 'C:\dev\project with spaces' `
+            -ResumeSource Codex -ResumePane 2 -ResumeSessionId 'codex-session-id'
+        $codexResumeScripts = @(Get-EmbeddedPowerShellScripts -CommandLine $script:CapturedProjectLaunch.ArgumentList)
+        Assert-True ($codexResumeScripts[1] -match "'--profile' 'agent-notifications' 'resume' 'codex-session-id'") 'Codex resume command was not placed in its original pane'
+        Assert-True ($codexResumeScripts[0] -notmatch "'resume' 'codex-session-id'") 'Codex resume command leaked into another pane'
+        Assert-True ($script:CapturedProjectLaunch.ArgumentList -match 'mf first ; mf nextInOrder$') 'Rebuilt project did not focus resumed pane 2'
+
+        Start-ProjectWindow -ProfileName 'project with spaces (d C:\dev\project with spaces)' `
+            -ProfileGuid '{4A5FF801-DEAD-BEEF-8123-0123456789AB}' -ProfilePath 'C:\dev\project with spaces' `
+            -ResumeSource Claude -ResumePane 4 -ResumeSessionId 'claude-session-id'
+        $claudeResumeScripts = @(Get-EmbeddedPowerShellScripts -CommandLine $script:CapturedProjectLaunch.ArgumentList)
+        Assert-True ($claudeResumeScripts[3] -match "'--settings' '[^']+' '--resume' 'claude-session-id'") 'Claude resume command was not placed in its original pane'
+        Assert-True ($claudeResumeScripts[2] -notmatch "'--resume' 'claude-session-id'") 'Claude resume command leaked into another pane'
+        Assert-True (([regex]::Matches($script:CapturedProjectLaunch.ArgumentList, 'mf nextInOrder')).Count -eq 3) 'Rebuilt project did not focus resumed pane 4'
     } finally {
         Set-Item -LiteralPath Function:\Get-AgentNotificationConfiguration -Value $originalConfigurationFunction
         Remove-Item -LiteralPath Function:\Get-Command
@@ -195,6 +228,25 @@ try {
         Start-ProjectWindow -ProfileName 'Existing project' -ProfileGuid $projectGuid -ProfilePath 'C:\dev\existing-project'
         Assert-Equal $script:CapturedStartProcess.FilePath 'wt.exe' 'Existing project did not target Windows Terminal'
         Assert-Equal $script:CapturedStartProcess.ArgumentList "-w $projectWindow focus-tab -t 0" 'Existing project did not emit only the focus command'
+
+        $paneGuardName = Get-AgentPaneGuardName -Window $projectWindow -Pane 2
+        $paneGuard = New-Object System.Threading.Mutex($false, $paneGuardName)
+        try {
+            Start-ProjectWindow -ProfileName 'Existing project' -ProfileGuid $projectGuid -ProfilePath 'C:\dev\existing-project' `
+                -ResumeSource Codex -ResumePane 2 -ResumeSessionId 'codex-session-id'
+            Assert-Equal $script:CapturedStartProcess.ArgumentList `
+                "-w $projectWindow focus-tab -t 0 ; move-focus first ; move-focus nextInOrder" `
+                'Existing exact chat did not focus its original pane'
+        } finally {
+            $paneGuard.Dispose()
+        }
+
+        $missingPaneFailed = $false
+        try {
+            Start-ProjectWindow -ProfileName 'Existing project' -ProfileGuid $projectGuid -ProfilePath 'C:\dev\existing-project' `
+                -ResumeSource Codex -ResumePane 2 -ResumeSessionId 'codex-session-id'
+        } catch { $missingPaneFailed = $true }
+        Assert-True $missingPaneFailed 'Missing original pane did not fail instead of focusing the wrong chat'
     } finally {
         Remove-Item -LiteralPath Function:\Start-Process
         $focusGuard.Dispose()

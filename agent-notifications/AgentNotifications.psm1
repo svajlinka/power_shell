@@ -181,9 +181,34 @@ function Get-AgentNotificationDisplayEvents {
     param([object[]]$Events, [int]$MaximumCount = 30)
 
     if ($null -eq $Events -or $Events.Count -eq 0 -or $MaximumCount -le 0) { return @() }
-    $visible = @($Events | Select-Object -Last $MaximumCount)
-    [array]::Reverse($visible)
-    return $visible
+    return @($Events | Select-Object -Last $MaximumCount)
+}
+
+function Get-AgentNotificationDisplayEntries {
+    param([object[]]$Events, [int]$MaximumCount = 30)
+
+    $visible = @(Get-AgentNotificationDisplayEvents -Events $Events -MaximumCount $MaximumCount)
+    $entries = New-Object System.Collections.Generic.List[object]
+    for ($i = 0; $i -lt $visible.Count; $i++) {
+        $entries.Add([pscustomobject]@{
+            number = $visible.Count - $i
+            event  = $visible[$i]
+        })
+    }
+    return $entries.ToArray()
+}
+
+function Find-AgentNotificationDisplayEvent {
+    param(
+        [object[]]$Events,
+        [Parameter(Mandatory = $true)][int]$Number,
+        [int]$MaximumCount = 30
+    )
+
+    $entry = @(Get-AgentNotificationDisplayEntries -Events $Events -MaximumCount $MaximumCount |
+        Where-Object { $_.number -eq $Number } | Select-Object -First 1)
+    if ($entry.Count -eq 0) { return $null }
+    return $entry[0].event
 }
 
 function Test-AgentNotificationHandled {
@@ -394,6 +419,8 @@ Export-ModuleMember -Function @(
     'Get-AgentNotificationProjectName',
     'Get-AgentNotificationChatName',
     'Get-AgentNotificationDisplayEvents',
+    'Get-AgentNotificationDisplayEntries',
+    'Find-AgentNotificationDisplayEvent',
     'Test-AgentNotificationHandled',
     'Format-AgentNotificationDisplayLine',
     'Find-AgentNotificationProjectProfile',
