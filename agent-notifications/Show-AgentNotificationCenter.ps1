@@ -16,7 +16,7 @@ function Show-Center {
 
     Clear-Host
     Write-Host '---==[ Agent Notifications ]==---' -ForegroundColor Cyan
-    Write-Host 'number = open chat   d = done all   c = clear   q = close' -ForegroundColor DarkGray
+    Write-Host 'Enter = latest   number = open chat   d = done all   c = clear   q = close' -ForegroundColor DarkGray
     Write-Host ''
 
     $displayEntries = @(Get-AgentNotificationDisplayEntries -Events $Events)
@@ -100,7 +100,10 @@ try {
             if ($key.Key -eq [ConsoleKey]::Enter) {
                 $selection = 0
                 $event = $null
-                if ([int]::TryParse($inputBuffer, [ref]$selection)) {
+                if ([string]::IsNullOrEmpty($inputBuffer)) {
+                    $selection = 1
+                    $event = Find-AgentNotificationDisplayEvent -Events $events -Number $selection
+                } elseif ([int]::TryParse($inputBuffer, [ref]$selection)) {
                     $event = Find-AgentNotificationDisplayEvent -Events $events -Number $selection
                 }
                 if ($null -ne $event) {

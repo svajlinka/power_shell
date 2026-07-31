@@ -18,6 +18,7 @@ On the first launcher-created Codex session, run `/hooks` and trust the `Permiss
 - Enter a project number in the left pane to launch its four-agent project window.
 - Selecting an already-open project focuses its existing window instead of launching another one.
 - Enter an event number in the right pane to focus its original chat.
+- Press Enter with an empty selection to open notification `1`, the latest chat.
 - Notifications are shown oldest-to-newest from top to bottom, with the latest event numbered `1` at the bottom.
 - Each row contains only its number, time, short project name, and best available chat name.
 - Codex rows use the indexed chat title when available, otherwise the conversation's first meaningful request.
