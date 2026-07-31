@@ -143,6 +143,12 @@ function Get-AgentNotificationProjectName {
 
     $project = "$(Get-AgentNotificationProperty -InputObject $Event -Name 'project')".Trim()
     if ([string]::IsNullOrWhiteSpace($project)) { return 'Unknown project' }
+    if ($project -match '[\u00C2\u00C3\u00E2]') {
+        try {
+            $decoded = [Text.Encoding]::UTF8.GetString([Text.Encoding]::GetEncoding(1252).GetBytes($project))
+            if ($decoded.IndexOf([char]0xFFFD) -lt 0) { $project = $decoded }
+        } catch { }
+    }
     return ($project -replace '\s+\(d\s+.+\)$', '').Trim()
 }
 

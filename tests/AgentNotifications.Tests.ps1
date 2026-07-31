@@ -67,6 +67,12 @@ try {
     Assert-True ($null -eq (ConvertTo-AgentNotificationEvent -InputObject $unrelatedToolPayload -Metadata $metadata)) `
         'Unrelated Codex tool call was converted to a notification'
     Assert-Equal (Get-AgentNotificationProjectName ([pscustomobject]@{ project = 'power_shell (d C:\Users\example\dev\power_shell)' })) 'power_shell' 'Project path was not removed from the compact name'
+    $correctProjectName = 'T' + [char]0x00E5 + 'gd - Mob - PT27'
+    $mojibakeProjectName = 'T' + [char]0x00C3 + [char]0x00A5 + 'gd - Mob - PT27'
+    Assert-Equal (Get-AgentNotificationProjectName ([pscustomobject]@{ project = "$mojibakeProjectName (d C:\Users\example\project)" })) `
+        $correctProjectName 'Legacy UTF-8 project-name mojibake was not repaired for display'
+    Assert-Equal (Get-AgentNotificationProjectName ([pscustomobject]@{ project = "$correctProjectName (d C:\Users\example\project)" })) `
+        $correctProjectName 'A correctly decoded project name was changed'
     $toastXml = New-AgentNotificationToastXml -Event $approval -ChatName 'Fix & verify <toast>'
     Assert-True ($toastXml -match '<toast duration="short">') 'Toast was not configured with short native duration'
     Assert-True ($toastXml -match '<text>sample-project - Codex</text>') 'Toast title was not compact project and source context'
@@ -205,6 +211,8 @@ try {
     Assert-True ($centerSource -match '\$command -eq ''q''\) \{ break \}') 'Close is not dispatched by Enter'
     $profileSource = Get-Content -Raw -LiteralPath $profilePath
     Assert-True ($profileSource -match "---==\[ Project Launcher \]==---") 'Project launcher is missing its matching cyan banner title'
+    Assert-True ([regex]::Matches($profileSource, '\[IO\.File\]::ReadAllText\(\$settingsFile, \[Text\.Encoding\]::UTF8\)').Count -eq 2) `
+        'Windows Terminal settings are not read as UTF-8 in both launcher and chat-reopen paths'
     Assert-True ($centerSource -match 'Open-AgentNotificationChat') 'Notification center does not use shared chat routing'
     $handlerSource = Get-Content -Raw -LiteralPath $handlerPath
     Assert-True ($handlerSource -match 'ConvertFrom-AgentNotificationUri') 'Toast activation handler does not validate its URI'

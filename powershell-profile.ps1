@@ -285,7 +285,7 @@ function Open-AgentNotificationChat {
             }
 
             $settingsFile = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
-            $settings = Get-Content -Raw -LiteralPath $settingsFile | ConvertFrom-Json
+            $settings = [IO.File]::ReadAllText($settingsFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
             $profile = Find-AgentNotificationProjectProfile -Event $Event -Profiles @($settings.profiles.list)
             if ($null -eq $profile) { throw 'That project profile no longer exists.' }
 
@@ -369,7 +369,7 @@ function Show-ProjectLauncher {
     }
 
     while ($true) {
-        $settings = Get-Content $settingsFile -Raw | ConvertFrom-Json
+        $settings = [IO.File]::ReadAllText($settingsFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
         $profiles = $settings.profiles.list
         $allNames = @($profiles | ForEach-Object { $_.name })
         $list     = @($profiles | Where-Object { -not $_.hidden } | Sort-Object -Property name)
