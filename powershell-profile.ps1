@@ -90,8 +90,9 @@ function New-AgentPaneEncodedCommand {
         "'" + ("$_" -replace "'", "''") + "'"
     }
     $argumentText = if ($Arguments.Count -gt 0) { ' ' + ($escaped[8..($escaped.Count - 1)] -join ' ') } else { '' }
+    $editorEnvironment = if ($Source -eq 'Codex') { "`$env:VISUAL = 'notepad.exe'`n" } else { '' }
     $paneScript = @"
-`$env:AI_NOTIFY_ENABLED = '1'
+$editorEnvironment`$env:AI_NOTIFY_ENABLED = '1'
 `$env:AI_NOTIFY_SOURCE = $($escaped[1])
 `$env:AI_NOTIFY_PANE = $($escaped[2])
 `$env:AI_NOTIFY_PROJECT = $($escaped[3])

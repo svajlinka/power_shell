@@ -273,6 +273,10 @@ try {
         Assert-True ($normalScripts[0] -match 'AgentNotificationWindowGuard') 'Pane did not retain the shared project-window guard'
         Assert-True ($normalScripts[0] -match 'AgentNotifications\.Pane\.agent-project-[0-9a-f]+\.1') 'First pane did not receive a unique pane guard'
         Assert-True ($normalScripts[3] -match 'AgentNotifications\.Pane\.agent-project-[0-9a-f]+\.4') 'Fourth pane did not receive a unique pane guard'
+        Assert-True ($normalScripts[0] -match "env:VISUAL = 'notepad\.exe'") 'First Codex pane did not configure Notepad as its prompt editor'
+        Assert-True ($normalScripts[1] -match "env:VISUAL = 'notepad\.exe'") 'Second Codex pane did not configure Notepad as its prompt editor'
+        Assert-True ($normalScripts[2] -notmatch 'env:VISUAL') 'Notepad prompt editor configuration leaked into the first Claude pane'
+        Assert-True ($normalScripts[3] -notmatch 'env:VISUAL') 'Notepad prompt editor configuration leaked into the second Claude pane'
 
         Start-ProjectWindow -ProfileName 'project with spaces (d C:\dev\project with spaces)' `
             -ProfileGuid '{4A5FF801-DEAD-BEEF-8123-0123456789AB}' -ProfilePath 'C:\dev\project with spaces' `
