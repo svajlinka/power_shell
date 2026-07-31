@@ -151,6 +151,7 @@ function Get-AgentNotificationChatName {
         [Parameter(Mandatory = $true)][object]$Event,
         [string]$CodexSessionIndexPath,
         [string]$CodexHistoryPath,
+        [string]$CodexSessionsPath,
         [string]$ClaudeHistoryPath
     )
 
@@ -161,6 +162,9 @@ function Get-AgentNotificationChatName {
     }
     if ([string]::IsNullOrWhiteSpace($CodexHistoryPath)) {
         $CodexHistoryPath = Join-Path $env:USERPROFILE '.codex\history.jsonl'
+    }
+    if ([string]::IsNullOrWhiteSpace($CodexSessionsPath)) {
+        $CodexSessionsPath = Join-Path $env:USERPROFILE '.codex\sessions'
     }
     if ([string]::IsNullOrWhiteSpace($ClaudeHistoryPath)) {
         $ClaudeHistoryPath = Join-Path $env:USERPROFILE '.claude\history.jsonl'
@@ -181,6 +185,37 @@ function Get-AgentNotificationChatName {
                         }
                     }
                 } catch { }
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($name) -and (Test-Path -LiteralPath $CodexSessionsPath)) {
+            $rolloutPath = Get-ChildItem -LiteralPath $CodexSessionsPath -Recurse -File `
+                -Filter "*-$sessionId.jsonl" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($null -ne $rolloutPath) {
+                $stream = $null
+                $reader = $null
+                try {
+                    $stream = [IO.FileStream]::new($rolloutPath.FullName, [IO.FileMode]::Open, `
+                        [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+                    $reader = [IO.StreamReader]::new($stream, [Text.Encoding]::UTF8, $true)
+                    while (-not $reader.EndOfStream) {
+                        $line = $reader.ReadLine()
+                        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                        try {
+                            $record = $line | ConvertFrom-Json
+                            $payload = Get-AgentNotificationProperty $record 'payload'
+                            $candidate = "$(Get-AgentNotificationProperty $payload 'message')".Trim()
+                            if ("$(Get-AgentNotificationProperty $record 'type')" -eq 'event_msg' -and
+                                "$(Get-AgentNotificationProperty $payload 'type')" -eq 'user_message' -and
+                                -not [string]::IsNullOrWhiteSpace($candidate) -and -not $candidate.StartsWith('/')) {
+                                $name = $candidate
+                                break
+                            }
+                        } catch { }
+                    }
+                } catch { } finally {
+                    if ($null -ne $reader) { $reader.Dispose() }
+                    elseif ($null -ne $stream) { $stream.Dispose() }
+                }
             }
         }
         if ([string]::IsNullOrWhiteSpace($name) -and (Test-Path -LiteralPath $CodexHistoryPath)) {

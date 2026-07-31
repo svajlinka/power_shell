@@ -37,6 +37,7 @@ $stateRoot = Join-Path $testRoot 'state'
 $codexHome = Join-Path $testRoot 'codex'
 $codexIndex = Join-Path $testRoot 'session_index.jsonl'
 $codexHistory = Join-Path $testRoot 'codex-history.jsonl'
+$codexSessions = Join-Path $testRoot 'sessions'
 $claudeHistory = Join-Path $testRoot 'history.jsonl'
 
 try {
@@ -90,7 +91,8 @@ try {
         '{not valid json}',
         '{"session_id":"other-session","text":"Ignore unrelated history"}',
         '{"session_id":"history-session","text":"Första riktiga frågan"}',
-        '{"session_id":"history-session","text":"Later request"}'
+        '{"session_id":"history-session","text":"Later request"}',
+        '{"session_id":"rollout-session","text":"Later request copied to global history"}'
     ) | Set-Content -LiteralPath $codexHistory -Encoding UTF8
     Assert-Equal (Get-AgentNotificationChatName -Event $approval -CodexSessionIndexPath $codexIndex `
         -CodexHistoryPath $codexHistory -ClaudeHistoryPath $claudeHistory) `
@@ -100,6 +102,19 @@ try {
         -CodexSessionIndexPath (Join-Path $testRoot 'missing-index.jsonl') `
         -CodexHistoryPath $codexHistory -ClaudeHistoryPath $claudeHistory) `
         'Första riktiga frågan' 'Unindexed Codex chat did not use its first meaningful history request'
+    $rolloutDirectory = Join-Path $codexSessions '2026\08\01'
+    [void](New-Item -ItemType Directory -Path $rolloutDirectory -Force)
+    @(
+        '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Injected workspace instructions"}]}}',
+        '{not valid json}',
+        '{"type":"event_msg","payload":{"type":"user_message","message":"tell me about this project like 10 bullets"}}',
+        '{"type":"event_msg","payload":{"type":"user_message","message":"Later request"}}'
+    ) | Set-Content -LiteralPath (Join-Path $rolloutDirectory 'rollout-2026-08-01T00-08-39-rollout-session.jsonl') -Encoding UTF8
+    $rolloutEvent = [pscustomobject]@{ source = 'Codex'; sessionId = 'rollout-session' }
+    Assert-Equal (Get-AgentNotificationChatName -Event $rolloutEvent `
+        -CodexSessionIndexPath (Join-Path $testRoot 'missing-index.jsonl') `
+        -CodexHistoryPath $codexHistory -CodexSessionsPath $codexSessions -ClaudeHistoryPath $claudeHistory) `
+        'tell me about this project like 10 bullets' 'Codex chat did not prefer the first rollout prompt over a later global-history prompt'
 
     $profiles = @(
         [pscustomobject]@{ name = 'sample-project'; guid = '{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}'; startingDirectory = 'C:\dev\sample-project' },
