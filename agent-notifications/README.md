@@ -10,7 +10,7 @@ Run this once from a PowerShell session that has loaded `powershell-profile.ps1`
 Install-AgentNotifications
 ```
 
-On the first launcher-created Codex session, run `/hooks` and trust the `PermissionRequest` and `Stop` hooks from `agent-notifications.config.toml`.
+On the first launcher-created Codex session, run `/hooks` and trust the `PreToolUse`, `PermissionRequest`, and `Stop` hooks from `agent-notifications.config.toml`.
 
 ## Control center
 
@@ -22,6 +22,7 @@ On the first launcher-created Codex session, run `/hooks` and trust the `Permiss
 - Notifications are shown oldest-to-newest from top to bottom, with the latest event numbered `1` at the bottom.
 - Each row contains only its number, time, short project name, and best available chat name.
 - Each new event also shows a short native Windows toast with the project and chat name. Its **Open chat** button follows the same exact-chat routing as the inbox and marks the event handled after a successful open.
+- Native Codex answer-choice questions are captured as input notifications before Codex waits for your selection.
 - Toasts keep the standard notification sound and expire quickly from the screen; Windows controls the precise display timing.
 - Codex rows use the indexed chat title when available, otherwise the conversation's first meaningful request.
 - Unhandled notifications are yellow. A notification turns blue after selecting it successfully focuses or resumes its chat.
@@ -32,7 +33,7 @@ On the first launcher-created Codex session, run `/hooks` and trust the `Permiss
 - Type `c` and press Enter to clear the notification history.
 - Type `q` and press Enter in the notification pane to close it; the next `p` restores it.
 - Close the Agent Control Center window normally to close both panes together.
-- Run `Test-AgentNotification approval` or `Test-AgentNotification finished` to send a test event.
+- Run `Test-AgentNotification input`, `Test-AgentNotification approval`, or `Test-AgentNotification finished` to send a test event.
 
 Events are stored in `%LOCALAPPDATA%\AgentNotifications\events.jsonl`. Only short previews and launcher routing metadata are retained; raw hook payloads and transcripts are not stored.
 

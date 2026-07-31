@@ -307,7 +307,7 @@ function Open-AgentNotificationChat {
 
 function Test-AgentNotification {
     param(
-        [ValidateSet('approval', 'finished')]
+        [ValidateSet('input', 'approval', 'finished')]
         [string]$Type = 'finished'
     )
 
@@ -324,10 +324,16 @@ function Test-AgentNotification {
         $env:AI_NOTIFY_PROFILE_GUID = ''
         $env:AI_NOTIFY_WINDOW = 'agent-control-center'
         $env:AI_NOTIFY_GUARD = 'Local\AgentNotifications.ControlCenter.Notifications'
-        $payload = if ($Type -eq 'approval') {
-            '{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"description":"Test approval required"}}'
-        } else {
-            '{"hook_event_name":"Stop","last_assistant_message":"Test turn finished successfully"}'
+        $payload = switch ($Type) {
+            'input' {
+                '{"hook_event_name":"PreToolUse","tool_name":"request_user_input","tool_input":{"questions":[{"question":"Test answer required"}]}}'
+            }
+            'approval' {
+                '{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"description":"Test approval required"}}'
+            }
+            default {
+                '{"hook_event_name":"Stop","last_assistant_message":"Test turn finished successfully"}'
+            }
         }
         $payload | & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $receiver | Out-Null
         [void](Start-AgentControlCenter)

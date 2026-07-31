@@ -54,6 +54,17 @@ try {
     Assert-Equal $approval.profileGuid $metadata.ProfileGuid 'Project profile GUID was not retained for reopening'
     Assert-Equal $approval.sessionId 'codex-session' 'Hook session ID was not retained for chat-name lookup'
     Assert-True (-not $approval.handled) 'New notification was unexpectedly marked handled'
+    $inputPayload = '{"hook_event_name":"PreToolUse","session_id":"codex-session","tool_name":"request_user_input","tool_input":{"questions":[{"question":"Choose the deployment target","options":[{"label":"Production"}]},{"question":"Confirm rollout"}]}}' | ConvertFrom-Json
+    $inputEvent = ConvertTo-AgentNotificationEvent -InputObject $inputPayload -Metadata $metadata
+    Assert-Equal $inputEvent.status 'input' 'Codex question status was not normalized'
+    Assert-Equal $inputEvent.message 'Choose the deployment target' 'Codex question preview did not use the first question'
+    Assert-Equal $inputEvent.sessionId 'codex-session' 'Codex question did not retain its session ID'
+    $emptyInputPayload = '{"hook_event_name":"PreToolUse","tool_name":"request_user_input","tool_input":{"questions":[]}}' | ConvertFrom-Json
+    Assert-Equal (ConvertTo-AgentNotificationEvent -InputObject $emptyInputPayload -Metadata $metadata).message `
+        'Codex is waiting for your input' 'Codex question fallback message was not used'
+    $unrelatedToolPayload = '{"hook_event_name":"PreToolUse","tool_name":"update_plan","tool_input":{}}' | ConvertFrom-Json
+    Assert-True ($null -eq (ConvertTo-AgentNotificationEvent -InputObject $unrelatedToolPayload -Metadata $metadata)) `
+        'Unrelated Codex tool call was converted to a notification'
     Assert-Equal (Get-AgentNotificationProjectName ([pscustomobject]@{ project = 'power_shell (d C:\Users\example\dev\power_shell)' })) 'power_shell' 'Project path was not removed from the compact name'
     $toastXml = New-AgentNotificationToastXml -Event $approval -ChatName 'Fix & verify <toast>'
     Assert-True ($toastXml -match '<toast duration="short">') 'Toast was not configured with short native duration'
@@ -193,7 +204,11 @@ try {
     $claudeSettings = Join-Path $stateRoot 'claude-settings.json'
     Assert-True (Test-Path -LiteralPath $codexProfile) 'Installer did not create the Codex profile'
     Assert-True (Test-Path -LiteralPath $claudeSettings) 'Installer did not create Claude settings'
-    Assert-True ((Get-Content -Raw -LiteralPath $codexProfile) -match '\[\[hooks\.PermissionRequest\]\]') 'Codex approval hook is missing'
+    $installedCodexProfile = Get-Content -Raw -LiteralPath $codexProfile
+    Assert-True ($installedCodexProfile -match '\[\[hooks\.PreToolUse\]\]') 'Codex question hook is missing'
+    Assert-True ($installedCodexProfile -match "matcher = '\^request_user_input\$'") 'Codex question hook matcher is missing or too broad'
+    Assert-True ($installedCodexProfile -match '\[\[hooks\.PermissionRequest\]\]') 'Codex approval hook is missing'
+    Assert-True ($installedCodexProfile -match '\[\[hooks\.Stop\]\]') 'Codex stop hook is missing'
     $parsedClaude = Get-Content -Raw -LiteralPath $claudeSettings | ConvertFrom-Json
     Assert-True ($null -ne $parsedClaude.hooks.Notification) 'Claude notification hook is missing'
     Assert-True ($null -ne $parsedClaude.hooks.Stop) 'Claude stop hook is missing'
@@ -369,11 +384,14 @@ try {
         $env:AI_NOTIFY_PANE = '1'
         $env:AI_NOTIFY_WINDOW = 'test-window'
         $env:AI_NOTIFY_GUARD = 'test-guard'
-        $receiverPayload = '{"hook_event_name":"Stop","last_assistant_message":"Receiver test"}'
+        $receiverPayload = '{"hook_event_name":"PreToolUse","session_id":"receiver-session","tool_name":"request_user_input","tool_input":{"questions":[{"question":"Receiver input test"}]}}'
         $receiverOutput = $receiverPayload | & powershell.exe -NoProfile -ExecutionPolicy Bypass `
             -File $receiverPath -StateRoot $stateRoot -NoToast
         Assert-Equal $receiverOutput '{}' 'Receiver did not emit a no-op JSON hook response'
         Assert-Equal @(Read-AgentNotificationEvents -StateRoot $stateRoot).Count 1 'Receiver did not append its event'
+        $receiverEvent = @(Read-AgentNotificationEvents -StateRoot $stateRoot)[0]
+        Assert-Equal $receiverEvent.status 'input' 'Receiver did not persist the Codex question as input'
+        Assert-Equal $receiverEvent.message 'Receiver input test' 'Receiver did not persist the Codex question preview'
     } finally {
         $env:AI_NOTIFY_ENABLED = $oldEnabled
         $env:AI_NOTIFY_SOURCE = $oldSource

@@ -47,6 +47,14 @@ $tomlCommand = $hookCommand.Replace("'", "''")
 $codexProfile = @"
 $marker
 
+[[hooks.PreToolUse]]
+matcher = '^request_user_input$'
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = '$tomlCommand'
+command_windows = '$tomlCommand'
+timeout = 5
+
 [[hooks.PermissionRequest]]
 [[hooks.PermissionRequest.hooks]]
 type = "command"
@@ -117,4 +125,4 @@ Write-Host 'Agent notification launcher configuration installed.' -ForegroundCol
 Write-Host "Codex profile:   $codexProfilePath"
 Write-Host "Claude settings: $claudeSettingsPath"
 if (-not $SkipProtocolRegistration) { Write-Host 'Toast action:      agentnotify://open/<event-id>' }
-Write-Host 'On the first Codex launch, open /hooks and trust the two profile hooks.' -ForegroundColor Yellow
+Write-Host 'On the first Codex launch, open /hooks and trust the three profile hooks.' -ForegroundColor Yellow

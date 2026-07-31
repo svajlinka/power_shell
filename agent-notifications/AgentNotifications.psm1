@@ -65,6 +65,24 @@ function ConvertTo-AgentNotificationEvent {
     $message = ''
 
     switch ($hookName) {
+        'PreToolUse' {
+            $toolName = Get-AgentNotificationProperty -InputObject $InputObject -Name 'tool_name'
+            if ("$toolName" -ne 'request_user_input') { return $null }
+
+            $status = 'input'
+            $toolInput = Get-AgentNotificationProperty -InputObject $InputObject -Name 'tool_input'
+            $questions = @(Get-AgentNotificationProperty -InputObject $toolInput -Name 'questions')
+            foreach ($question in $questions) {
+                $candidate = Get-AgentNotificationProperty -InputObject $question -Name 'question'
+                if (-not [string]::IsNullOrWhiteSpace("$candidate")) {
+                    $message = $candidate
+                    break
+                }
+            }
+            if ([string]::IsNullOrWhiteSpace("$message")) {
+                $message = 'Codex is waiting for your input'
+            }
+        }
         'PermissionRequest' {
             $status = 'approval'
             $toolInput = Get-AgentNotificationProperty -InputObject $InputObject -Name 'tool_input'
