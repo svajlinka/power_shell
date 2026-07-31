@@ -2,6 +2,7 @@ param([string]$StateRoot)
 
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'AgentNotifications.psm1') -Force -DisableNameChecking
+. (Join-Path (Split-Path -Parent $PSScriptRoot) 'powershell-profile.ps1')
 
 $created = $false
 $centerMutex = New-Object System.Threading.Mutex($true, 'Local\AgentNotifications.ControlCenter.Notifications', [ref]$created)
@@ -88,7 +89,20 @@ try {
                         Start-Process wt.exe -ArgumentList @('-w', $event.window, 'focus-tab', '-t', '0')
                         $notice = "Focused $($event.project); notification came from pane $($event.pane)."
                     } else {
-                        $notice = 'That project window is no longer open.'
+                        try {
+                            $settingsFile = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+                            $settings = Get-Content -Raw -LiteralPath $settingsFile | ConvertFrom-Json
+                            $profile = Find-AgentNotificationProjectProfile -Event $event -Profiles @($settings.profiles.list)
+                            if ($null -eq $profile) {
+                                $notice = 'That project profile no longer exists.'
+                            } else {
+                                Start-ProjectWindow -ProfileName $profile.name -ProfileGuid "$($profile.guid)" `
+                                    -ProfilePath $profile.startingDirectory
+                                $notice = "Reopened $($profile.name)."
+                            }
+                        } catch {
+                            $notice = "Could not reopen that project: $($_.Exception.Message)"
+                        }
                     }
                 } else {
                     $notice = 'Enter a valid event number.'

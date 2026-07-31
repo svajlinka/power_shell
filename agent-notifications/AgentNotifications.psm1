@@ -51,6 +51,7 @@ function ConvertTo-AgentNotificationEvent {
             Enabled = $env:AI_NOTIFY_ENABLED
             Source  = $env:AI_NOTIFY_SOURCE
             Project = $env:AI_NOTIFY_PROJECT
+            ProfileGuid = $env:AI_NOTIFY_PROFILE_GUID
             Pane    = $env:AI_NOTIFY_PANE
             Window  = $env:AI_NOTIFY_WINDOW
             Guard   = $env:AI_NOTIFY_GUARD
@@ -100,6 +101,7 @@ function ConvertTo-AgentNotificationEvent {
 
     $pane = 0
     [void][int]::TryParse("$($Metadata.Pane)", [ref]$pane)
+    $profileGuid = if ($Metadata.ContainsKey('ProfileGuid')) { $Metadata.ProfileGuid } else { '' }
 
     return [pscustomobject][ordered]@{
         id        = [guid]::NewGuid().ToString('N')
@@ -107,11 +109,41 @@ function ConvertTo-AgentNotificationEvent {
         source    = ConvertTo-AgentNotificationPreview -Value $Metadata.Source -MaximumLength 20
         status    = $status
         project   = ConvertTo-AgentNotificationPreview -Value $Metadata.Project -MaximumLength 80
+        profileGuid = ConvertTo-AgentNotificationPreview -Value $profileGuid -MaximumLength 50
         pane      = $pane
         window    = ConvertTo-AgentNotificationPreview -Value $Metadata.Window -MaximumLength 100
         guard     = ConvertTo-AgentNotificationPreview -Value $Metadata.Guard -MaximumLength 180
         message   = ConvertTo-AgentNotificationPreview -Value $message -MaximumLength 160
     }
+}
+
+function Find-AgentNotificationProjectProfile {
+    param(
+        [Parameter(Mandatory = $true)][object]$Event,
+        [Parameter(Mandatory = $true)][object[]]$Profiles
+    )
+
+    $eventGuid = Get-AgentNotificationProperty -InputObject $Event -Name 'profileGuid'
+    if ([string]::IsNullOrWhiteSpace("$eventGuid")) {
+        $eventWindow = Get-AgentNotificationProperty -InputObject $Event -Name 'window'
+        if ("$eventWindow" -match '^agent-project-([0-9a-fA-F]{32})$') {
+            $eventGuid = $Matches[1]
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace("$eventGuid")) {
+        $normalizedEventGuid = "$eventGuid" -replace '[{}-]', ''
+        $match = @($Profiles | Where-Object {
+            ("$($_.guid)" -replace '[{}-]', '') -eq $normalizedEventGuid
+        } | Select-Object -First 1)
+        if ($match.Count -gt 0) { return $match[0] }
+    }
+
+    $projectName = Get-AgentNotificationProperty -InputObject $Event -Name 'project'
+    if (-not [string]::IsNullOrWhiteSpace("$projectName")) {
+        $match = @($Profiles | Where-Object { "$($_.name)" -eq "$projectName" } | Select-Object -First 1)
+        if ($match.Count -gt 0) { return $match[0] }
+    }
+    return $null
 }
 
 function Write-AgentNotificationEvent {
@@ -217,6 +249,7 @@ Export-ModuleMember -Function @(
     'Get-AgentNotificationStateRoot',
     'ConvertTo-AgentNotificationPreview',
     'ConvertTo-AgentNotificationEvent',
+    'Find-AgentNotificationProjectProfile',
     'Write-AgentNotificationEvent',
     'Read-AgentNotificationEvents',
     'Clear-AgentNotificationEvents',

@@ -28,6 +28,7 @@ $codexHome = Join-Path $testRoot 'codex'
 try {
     $metadata = @{
         Enabled = '1'; Source = 'Codex'; Project = 'sample-project'; Pane = '2'
+        ProfileGuid = '{11111111-2222-3333-4444-555555555555}'
         Window = 'agent-project-123'; Guard = 'Local\AgentNotifications.Project.123'
     }
     $approvalPayload = '{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"description":"Run tests\r\nwith approval"}}' | ConvertFrom-Json
@@ -35,6 +36,22 @@ try {
     Assert-Equal $approval.status 'approval' 'Codex permission status was not normalized'
     Assert-Equal $approval.message 'Run tests with approval' 'Approval preview was not sanitized'
     Assert-Equal $approval.pane 2 'Pane number was not retained'
+    Assert-Equal $approval.profileGuid $metadata.ProfileGuid 'Project profile GUID was not retained for reopening'
+
+    $profiles = @(
+        [pscustomobject]@{ name = 'sample-project'; guid = '{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}'; startingDirectory = 'C:\dev\sample-project' },
+        [pscustomobject]@{ name = 'renamed-project'; guid = $metadata.ProfileGuid; startingDirectory = 'C:\dev\renamed-project' }
+    )
+    $resolvedByGuid = Find-AgentNotificationProjectProfile -Event $approval -Profiles $profiles
+    Assert-Equal $resolvedByGuid.name 'renamed-project' 'Closed project was not resolved by stable profile GUID'
+    $windowFallbackEvent = [pscustomobject]@{ project = 'truncated'; window = 'agent-project-11111111222233334444555555555555' }
+    $resolvedByWindow = Find-AgentNotificationProjectProfile -Event $windowFallbackEvent -Profiles $profiles
+    Assert-Equal $resolvedByWindow.name 'renamed-project' 'Existing notification was not resolved from its stable window name'
+    $legacyEvent = [pscustomobject]@{ project = 'sample-project' }
+    $resolvedByName = Find-AgentNotificationProjectProfile -Event $legacyEvent -Profiles $profiles
+    Assert-Equal $resolvedByName.name 'sample-project' 'Legacy notification was not resolved by project name'
+    $missingProfile = Find-AgentNotificationProjectProfile -Event ([pscustomobject]@{ project = 'missing-project' }) -Profiles $profiles
+    Assert-True ($null -eq $missingProfile) 'Missing project profile unexpectedly resolved'
 
     $claudePayload = '{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"Claude is waiting"}' | ConvertFrom-Json
     $metadata.Source = 'Claude'

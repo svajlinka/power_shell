@@ -79,23 +79,25 @@ function New-AgentPaneEncodedCommand {
         [Parameter(Mandatory = $true)][string]$Source,
         [Parameter(Mandatory = $true)][int]$Pane,
         [Parameter(Mandatory = $true)][string]$Project,
+        [Parameter(Mandatory = $true)][string]$ProfileGuid,
         [Parameter(Mandatory = $true)][string]$Window,
         [Parameter(Mandatory = $true)][string]$Guard,
         [string[]]$Arguments = @()
     )
 
-    $escaped = (@($Command, $Source, "$Pane", $Project, $Window, $Guard) + $Arguments) | ForEach-Object {
+    $escaped = (@($Command, $Source, "$Pane", $Project, $ProfileGuid, $Window, $Guard) + $Arguments) | ForEach-Object {
         "'" + ("$_" -replace "'", "''") + "'"
     }
-    $argumentText = if ($Arguments.Count -gt 0) { ' ' + ($escaped[6..($escaped.Count - 1)] -join ' ') } else { '' }
+    $argumentText = if ($Arguments.Count -gt 0) { ' ' + ($escaped[7..($escaped.Count - 1)] -join ' ') } else { '' }
     $paneScript = @"
 `$env:AI_NOTIFY_ENABLED = '1'
 `$env:AI_NOTIFY_SOURCE = $($escaped[1])
 `$env:AI_NOTIFY_PANE = $($escaped[2])
 `$env:AI_NOTIFY_PROJECT = $($escaped[3])
-`$env:AI_NOTIFY_WINDOW = $($escaped[4])
-`$env:AI_NOTIFY_GUARD = $($escaped[5])
-`$global:AgentNotificationWindowGuard = New-Object System.Threading.Mutex(`$false, $($escaped[5]))
+`$env:AI_NOTIFY_PROFILE_GUID = $($escaped[4])
+`$env:AI_NOTIFY_WINDOW = $($escaped[5])
+`$env:AI_NOTIFY_GUARD = $($escaped[6])
+`$global:AgentNotificationWindowGuard = New-Object System.Threading.Mutex(`$false, $($escaped[6]))
 & $($escaped[0])$argumentText
 "@
     return [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($paneScript))
@@ -179,7 +181,7 @@ function Start-ProjectWindow {
             @('--settings', $configuration.ClaudeSettings)
         }
         $encoded = New-AgentPaneEncodedCommand -Command $commandPath -Source $source -Pane ($i + 1) `
-            -Project $ProfileName -Window $windowName -Guard $guardName -Arguments $arguments
+            -Project $ProfileName -ProfileGuid $ProfileGuid -Window $windowName -Guard $guardName -Arguments $arguments
         $shell = "powershell.exe -NoExit -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
 
         if ($i -eq 0) {
@@ -205,7 +207,7 @@ function Test-AgentNotification {
 
     $receiver = Join-Path $script:AgentNotificationsRoot 'Receive-AgentNotification.ps1'
     $oldValues = @{}
-    foreach ($name in @('AI_NOTIFY_ENABLED', 'AI_NOTIFY_SOURCE', 'AI_NOTIFY_PANE', 'AI_NOTIFY_PROJECT', 'AI_NOTIFY_WINDOW', 'AI_NOTIFY_GUARD')) {
+    foreach ($name in @('AI_NOTIFY_ENABLED', 'AI_NOTIFY_SOURCE', 'AI_NOTIFY_PANE', 'AI_NOTIFY_PROJECT', 'AI_NOTIFY_PROFILE_GUID', 'AI_NOTIFY_WINDOW', 'AI_NOTIFY_GUARD')) {
         $oldValues[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
     }
     try {
@@ -213,6 +215,7 @@ function Test-AgentNotification {
         $env:AI_NOTIFY_SOURCE = 'Test'
         $env:AI_NOTIFY_PANE = '0'
         $env:AI_NOTIFY_PROJECT = 'Notification smoke test'
+        $env:AI_NOTIFY_PROFILE_GUID = ''
         $env:AI_NOTIFY_WINDOW = 'agent-control-center'
         $env:AI_NOTIFY_GUARD = 'Local\AgentNotifications.ControlCenter.Notifications'
         $payload = if ($Type -eq 'approval') {
