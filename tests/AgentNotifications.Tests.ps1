@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $modulePath = Join-Path $repoRoot 'agent-notifications\AgentNotifications.psm1'
 $receiverPath = Join-Path $repoRoot 'agent-notifications\Receive-AgentNotification.ps1'
+$centerPath = Join-Path $repoRoot 'agent-notifications\Show-AgentNotificationCenter.ps1'
 $installerPath = Join-Path $repoRoot 'agent-notifications\Install-AgentNotifications.ps1'
 Import-Module $modulePath -Force -DisableNameChecking
 . (Join-Path $repoRoot 'powershell-profile.ps1')
@@ -143,6 +144,11 @@ try {
         -CodexSessionIndexPath $codexIndex -CodexHistoryPath $codexHistory -ClaudeHistoryPath $claudeHistory
     Assert-True ($compactLine -match '^\s*1\s+\d{2}:\d{2}:\d{2}\s+sample-project\s+Fixa räksmörgåsen$') 'Compact notification row did not contain only number, time, project, and chat name'
     Assert-True ($compactLine -notmatch 'Codex|approval|pane|Run tests|C:\\') 'Compact notification row leaked hidden routing or message details'
+
+    $centerSource = Get-Content -Raw -LiteralPath $centerPath
+    Assert-True ($centerSource -match 'Write-Host \$key\.KeyChar -NoNewline') 'Typing a selection does not update the prompt directly'
+    Assert-True ($centerSource -match 'Write-Host "`b `b" -NoNewline') 'Backspace does not update the prompt directly'
+    Assert-True ($centerSource -notmatch '\$notice = "(?:Focused|Reopened)') 'Successful chat actions still emit status notices'
 
     Clear-AgentNotificationEvents -StateRoot $stateRoot
     Assert-Equal @(Read-AgentNotificationEvents -StateRoot $stateRoot).Count 0 'Clear did not empty notification history'

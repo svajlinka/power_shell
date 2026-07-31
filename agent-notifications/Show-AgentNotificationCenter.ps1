@@ -77,14 +77,16 @@ try {
                 Clear-AgentNotificationEvents -StateRoot $StateRoot
                 $events = @()
                 $inputBuffer = ''
-                $notice = 'Notification history cleared.'
+                $notice = ''
                 $lastSignature = ''
                 $needsRender = $true
                 continue
             }
             if ($key.Key -eq [ConsoleKey]::Backspace) {
-                if ($inputBuffer.Length -gt 0) { $inputBuffer = $inputBuffer.Substring(0, $inputBuffer.Length - 1) }
-                $needsRender = $true
+                if ($inputBuffer.Length -gt 0) {
+                    $inputBuffer = $inputBuffer.Substring(0, $inputBuffer.Length - 1)
+                    Write-Host "`b `b" -NoNewline
+                }
                 continue
             }
             if ($key.Key -eq [ConsoleKey]::Enter) {
@@ -105,11 +107,10 @@ try {
                     if (Test-AgentNotificationTarget -Guard $event.guard) {
                         if ($hasExactChat) {
                             Start-Process wt.exe -ArgumentList (Get-AgentPaneFocusArguments -Window $event.window -Pane $pane)
-                            $notice = "Focused the saved $source chat in $($event.project)."
                         } else {
                             Start-Process wt.exe -ArgumentList @('-w', $event.window, 'focus-tab', '-t', '0')
-                            $notice = "Focused $($event.project); this older notification has no saved chat ID."
                         }
+                        $notice = ''
                         $succeeded = $true
                     } else {
                         try {
@@ -126,12 +127,12 @@ try {
                                     Start-ProjectWindow -ProfileName $profile.name -ProfileGuid "$($profile.guid)" `
                                         -ProfilePath $profile.startingDirectory -ResumeSource $source `
                                         -ResumePane $pane -ResumeSessionId $sessionId
-                                    $notice = "Reopened $($profile.name) and resumed the saved $source chat."
+                                    $notice = ''
                                     $succeeded = $true
                                 } else {
                                     Start-ProjectWindow -ProfileName $profile.name -ProfileGuid "$($profile.guid)" `
                                         -ProfilePath $profile.startingDirectory
-                                    $notice = "Reopened $($profile.name); this older notification has no saved chat ID."
+                                    $notice = ''
                                     $succeeded = $true
                                 }
                             }
@@ -153,7 +154,7 @@ try {
             if ([char]::IsDigit($key.KeyChar)) {
                 $inputBuffer += $key.KeyChar
                 $notice = ''
-                $needsRender = $true
+                Write-Host $key.KeyChar -NoNewline -ForegroundColor Green
             }
         }
 
