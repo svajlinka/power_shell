@@ -92,9 +92,42 @@ try {
     $otherWindow = Get-ProjectWindowName -ProfileGuid '{2A5FF801-DEAD-BEEF-8123-0123456789AB}'
     Assert-True ($otherWindow -ne $projectWindow) 'Different project profiles received the same window name'
     Assert-Equal ((Get-UniqueProjectChoices -Answer '3 1,3 2 1') -join ',') '3,1,2' 'Repeated project choices were not deduplicated in input order'
+    Assert-Equal (Get-ProjectDisplayName -ProfilePath 'C:\dev\power_shell' -FallbackName 'fallback') 'power_shell' 'Project title was not derived from its directory'
+    Assert-Equal (Get-ProjectDisplayName -ProfilePath 'C:\dev\project with spaces\' -FallbackName 'fallback') 'project with spaces' 'Project title did not handle spaces or a trailing separator'
+    Assert-Equal (Get-ProjectDisplayName -ProfilePath 'C:\' -FallbackName 'Fallback Project') 'Fallback Project' 'Project title did not fall back for a root path'
     $invalidGuidFailed = $false
     try { [void](Get-ProjectWindowName -ProfileGuid 'not-a-guid') } catch { $invalidGuidFailed = $true }
     Assert-True $invalidGuidFailed 'Invalid project GUID was accepted'
+
+    $originalConfigurationFunction = (Get-Item -LiteralPath Function:\Get-AgentNotificationConfiguration).ScriptBlock
+    $script:CapturedProjectLaunch = $null
+    function Get-AgentNotificationConfiguration {
+        [pscustomobject]@{
+            CodexProfile = $codexProfile
+            ClaudeSettings = $claudeSettings
+            CenterScript = ''
+            Installer = ''
+        }
+    }
+    function Get-Command {
+        param([string]$Name)
+        [pscustomobject]@{ Source = "C:\tools\$Name" }
+    }
+    function Start-Process {
+        param([string]$FilePath, [object]$ArgumentList)
+        $script:CapturedProjectLaunch = [pscustomobject]@{ FilePath = $FilePath; ArgumentList = "$ArgumentList" }
+    }
+    try {
+        Start-ProjectWindow -ProfileName 'project with spaces (d C:\dev\project with spaces)' `
+            -ProfileGuid '{4A5FF801-DEAD-BEEF-8123-0123456789AB}' -ProfilePath 'C:\dev\project with spaces'
+        $titleMatches = [regex]::Matches($script:CapturedProjectLaunch.ArgumentList, '--title "project with spaces"').Count
+        Assert-Equal $titleMatches 4 'Not every project pane received the project-only title'
+        Assert-True ($script:CapturedProjectLaunch.ArgumentList -notmatch '--title "\d+ (Codex|Claude)"') 'Agent-number title still overrides the project title'
+    } finally {
+        Set-Item -LiteralPath Function:\Get-AgentNotificationConfiguration -Value $originalConfigurationFunction
+        Remove-Item -LiteralPath Function:\Get-Command
+        Remove-Item -LiteralPath Function:\Start-Process
+    }
 
     $focusGuardName = 'Local\AgentNotifications.Project.' + $projectWindow
     $focusGuard = New-Object System.Threading.Mutex($false, $focusGuardName)
@@ -104,7 +137,7 @@ try {
         $script:CapturedStartProcess = [pscustomobject]@{ FilePath = $FilePath; ArgumentList = "$ArgumentList" }
     }
     try {
-        Start-ProjectWindow -ProfileName 'Existing project' -ProfileGuid $projectGuid
+        Start-ProjectWindow -ProfileName 'Existing project' -ProfileGuid $projectGuid -ProfilePath 'C:\dev\existing-project'
         Assert-Equal $script:CapturedStartProcess.FilePath 'wt.exe' 'Existing project did not target Windows Terminal'
         Assert-Equal $script:CapturedStartProcess.ArgumentList "-w $projectWindow focus-tab -t 0" 'Existing project did not emit only the focus command'
     } finally {

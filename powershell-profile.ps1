@@ -111,6 +111,22 @@ function Get-ProjectWindowName {
     return "agent-project-$normalizedGuid"
 }
 
+function Get-ProjectDisplayName {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProfilePath,
+        [Parameter(Mandatory = $true)][string]$FallbackName
+    )
+
+    try {
+        $trimmedPath = $ProfilePath.Trim().TrimEnd([char[]]@('\', '/'))
+        $directoryName = [IO.Path]::GetFileName($trimmedPath)
+        if (-not [string]::IsNullOrWhiteSpace($directoryName)) {
+            return $directoryName
+        }
+    } catch { }
+    return $FallbackName
+}
+
 function Get-UniqueProjectChoices {
     param([AllowEmptyString()][string]$Answer)
 
@@ -124,6 +140,7 @@ function Start-ProjectWindow {
     param(
         [Parameter(Mandatory = $true)][string]$ProfileName,
         [Parameter(Mandatory = $true)][string]$ProfileGuid,
+        [Parameter(Mandatory = $true)][string]$ProfilePath,
         [string[]]$Commands = @('codex', 'codex', 'claude', 'claude')  # left to right
     )
 
@@ -149,6 +166,8 @@ function Start-ProjectWindow {
     }
 
     $q     = '"{0}"' -f $ProfileName
+    $projectTitle = Get-ProjectDisplayName -ProfilePath $ProfilePath -FallbackName $ProfileName
+    $quotedTitle = '"{0}"' -f $projectTitle
     $parts = @()
 
     for ($i = 0; $i -lt $Commands.Count; $i++) {
@@ -164,14 +183,14 @@ function Start-ProjectWindow {
         $shell = "powershell.exe -NoExit -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
 
         if ($i -eq 0) {
-            $parts += "-w $windowName new-tab --title `"$($i + 1) $source`" -p $q $shell"
+            $parts += "-w $windowName new-tab --title $quotedTitle -p $q $shell"
             continue
         }
 
         # Each sp splits the focused pane, so the fraction must shrink to get equal columns.
         $share = ($Commands.Count - $i) / ($Commands.Count - $i + 1)
         $size  = $share.ToString('0.####', [cultureinfo]::InvariantCulture)
-        $parts += "sp -V -s $size --title `"$($i + 1) $source`" -p $q $shell"
+        $parts += "sp -V -s $size --title $quotedTitle -p $q $shell"
     }
     $parts += 'mf first'
 
@@ -349,7 +368,8 @@ function Show-ProjectLauncher {
         foreach ($choice in (Get-UniqueProjectChoices -Answer $answer)) {
             if ($choice -match '^\d+$' -and [int]$choice -ge 1 -and [int]$choice -le $list.Count) {
                 $profile = $list[[int]$choice - 1]
-                Start-ProjectWindow -ProfileName $profile.name -ProfileGuid "$($profile.guid)"
+                Start-ProjectWindow -ProfileName $profile.name -ProfileGuid "$($profile.guid)" `
+                    -ProfilePath $profile.startingDirectory
                 Start-Sleep -Milliseconds 300
             } else {
                 Write-Warning "Invalid: $choice"
