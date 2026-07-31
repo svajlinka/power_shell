@@ -21,6 +21,8 @@ On the first launcher-created Codex session, run `/hooks` and trust the `Permiss
 - Press Enter with an empty selection to open notification `1`, the latest chat.
 - Notifications are shown oldest-to-newest from top to bottom, with the latest event numbered `1` at the bottom.
 - Each row contains only its number, time, short project name, and best available chat name.
+- Each new event also shows a short native Windows toast with the project and chat name. Its **Open chat** button follows the same exact-chat routing as the inbox and marks the event handled after a successful open.
+- Toasts keep the standard notification sound and expire quickly from the screen; Windows controls the precise display timing.
 - Codex rows use the indexed chat title when available, otherwise the conversation's first meaningful request.
 - Unhandled notifications are yellow. A notification turns blue after selecting it successfully focuses or resumes its chat.
 - If that project window was closed, selecting a new event rebuilds the four-pane layout and resumes its exact Codex or Claude chat in the original pane.
@@ -34,7 +36,7 @@ On the first launcher-created Codex session, run `/hooks` and trust the `Permiss
 
 Events are stored in `%LOCALAPPDATA%\AgentNotifications\events.jsonl`. Only short previews and launcher routing metadata are retained; raw hook payloads and transcripts are not stored.
 
-To remove the launcher-specific Codex and Claude configuration:
+To remove the launcher-specific Codex and Claude configuration and the owned `agentnotify://` URL handler:
 
 ```powershell
 Install-AgentNotifications -Uninstall

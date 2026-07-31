@@ -109,52 +109,9 @@ try {
                     $event = Find-AgentNotificationDisplayEvent -Events $events -Number $selection
                 }
                 if ($null -ne $event) {
-                    $succeeded = $false
-                    $sessionProperty = $event.PSObject.Properties['sessionId']
-                    $sessionId = if ($null -eq $sessionProperty) { '' } else { "$($sessionProperty.Value)" }
-                    $source = "$($event.source)"
-                    $pane = 0
-                    [void][int]::TryParse("$($event.pane)", [ref]$pane)
-                    $hasExactChat = -not [string]::IsNullOrWhiteSpace($sessionId) -and
-                        $source -in @('Codex', 'Claude') -and $pane -ge 1 -and $pane -le 4
-                    if (Test-AgentNotificationTarget -Guard $event.guard) {
-                        if ($hasExactChat) {
-                            Start-Process wt.exe -ArgumentList (Get-AgentPaneFocusArguments -Window $event.window -Pane $pane)
-                        } else {
-                            Start-Process wt.exe -ArgumentList @('-w', $event.window, 'focus-tab', '-t', '0')
-                        }
-                        $notice = ''
-                        $succeeded = $true
-                    } else {
-                        try {
-                            $windowGuard = 'Local\AgentNotifications.Project.' + $event.window
-                            if ($hasExactChat -and (Test-AgentNotificationTarget -Guard $windowGuard)) {
-                                $notice = 'The project is open, but the original chat pane is no longer available.'
-                            } else {
-                                $settingsFile = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
-                                $settings = Get-Content -Raw -LiteralPath $settingsFile | ConvertFrom-Json
-                                $profile = Find-AgentNotificationProjectProfile -Event $event -Profiles @($settings.profiles.list)
-                                if ($null -eq $profile) {
-                                    $notice = 'That project profile no longer exists.'
-                                } elseif ($hasExactChat) {
-                                    Start-ProjectWindow -ProfileName $profile.name -ProfileGuid "$($profile.guid)" `
-                                        -ProfilePath $profile.startingDirectory -ResumeSource $source `
-                                        -ResumePane $pane -ResumeSessionId $sessionId
-                                    $notice = ''
-                                    $succeeded = $true
-                                } else {
-                                    Start-ProjectWindow -ProfileName $profile.name -ProfileGuid "$($profile.guid)" `
-                                        -ProfilePath $profile.startingDirectory
-                                    $notice = ''
-                                    $succeeded = $true
-                                }
-                            }
-                        } catch {
-                            $notice = "Could not open that chat: $($_.Exception.Message)"
-                        }
-                    }
-                    if ($succeeded) {
-                        [void](Set-AgentNotificationHandled -EventId $event.id -StateRoot $StateRoot)
+                    $result = Open-AgentNotificationChat -Event $event -StateRoot $StateRoot
+                    $notice = $result.Error
+                    if ($result.Succeeded) {
                         $lastSignature = ''
                     }
                 } else {

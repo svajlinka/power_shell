@@ -256,6 +256,55 @@ function Start-ProjectWindow {
     Start-Process wt -ArgumentList ($parts -join ' ; ')
 }
 
+function Open-AgentNotificationChat {
+    param(
+        [Parameter(Mandatory = $true)][object]$Event,
+        [string]$StateRoot
+    )
+
+    try {
+        $sessionProperty = $Event.PSObject.Properties['sessionId']
+        $sessionId = if ($null -eq $sessionProperty) { '' } else { "$($sessionProperty.Value)" }
+        $source = "$($Event.source)"
+        $pane = 0
+        [void][int]::TryParse("$($Event.pane)", [ref]$pane)
+        $hasExactChat = -not [string]::IsNullOrWhiteSpace($sessionId) -and
+            $source -in @('Codex', 'Claude') -and $pane -ge 1 -and $pane -le 4
+
+        if (Test-AgentNotificationTarget -Guard $Event.guard) {
+            if ($hasExactChat) {
+                Start-Process wt.exe -ArgumentList (Get-AgentPaneFocusArguments -Window $Event.window -Pane $pane)
+            } else {
+                Start-Process wt.exe -ArgumentList @('-w', $Event.window, 'focus-tab', '-t', '0')
+            }
+        } else {
+            $windowGuard = 'Local\AgentNotifications.Project.' + $Event.window
+            if ($hasExactChat -and (Test-AgentNotificationTarget -Guard $windowGuard)) {
+                throw 'The project is open, but the original chat pane is no longer available.'
+            }
+
+            $settingsFile = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+            $settings = Get-Content -Raw -LiteralPath $settingsFile | ConvertFrom-Json
+            $profile = Find-AgentNotificationProjectProfile -Event $Event -Profiles @($settings.profiles.list)
+            if ($null -eq $profile) { throw 'That project profile no longer exists.' }
+
+            if ($hasExactChat) {
+                Start-ProjectWindow -ProfileName $profile.name -ProfileGuid "$($profile.guid)" `
+                    -ProfilePath $profile.startingDirectory -ResumeSource $source `
+                    -ResumePane $pane -ResumeSessionId $sessionId
+            } else {
+                Start-ProjectWindow -ProfileName $profile.name -ProfileGuid "$($profile.guid)" `
+                    -ProfilePath $profile.startingDirectory
+            }
+        }
+
+        [void](Set-AgentNotificationHandled -EventId $Event.id -StateRoot $StateRoot)
+        return [pscustomobject]@{ Succeeded = $true; Error = '' }
+    } catch {
+        return [pscustomobject]@{ Succeeded = $false; Error = "Could not open that chat: $($_.Exception.Message)" }
+    }
+}
+
 function Test-AgentNotification {
     param(
         [ValidateSet('approval', 'finished')]

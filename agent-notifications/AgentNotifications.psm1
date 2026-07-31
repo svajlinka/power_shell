@@ -327,6 +327,31 @@ function Read-AgentNotificationEvents {
     return $events.ToArray()
 }
 
+function Find-AgentNotificationEventById {
+    param(
+        [Parameter(Mandatory = $true)][string]$EventId,
+        [string]$StateRoot
+    )
+
+    if ($EventId -notmatch '^[0-9a-fA-F]{32}$') { return $null }
+    return @(Read-AgentNotificationEvents -StateRoot $StateRoot | Where-Object {
+        "$(Get-AgentNotificationProperty -InputObject $_ -Name 'id')" -eq $EventId
+    } | Select-Object -First 1)[0]
+}
+
+function ConvertFrom-AgentNotificationUri {
+    param([Parameter(Mandatory = $true)][string]$Uri)
+
+    try { $parsed = [Uri]$Uri } catch { return $null }
+    if (-not $parsed.IsAbsoluteUri -or $parsed.Scheme -cne 'agentnotify' -or
+        $parsed.Host -cne 'open' -or -not [string]::IsNullOrEmpty($parsed.Query) -or
+        -not [string]::IsNullOrEmpty($parsed.Fragment)) {
+        return $null
+    }
+    if ($parsed.AbsolutePath -notmatch '^/([0-9a-fA-F]{32})$') { return $null }
+    return $Matches[1]
+}
+
 function Clear-AgentNotificationEvents {
     param([string]$StateRoot)
 
@@ -423,22 +448,37 @@ function Set-AllAgentNotificationsHandled {
     return [int]$result.changedCount
 }
 
+function New-AgentNotificationToastXml {
+    param(
+        [Parameter(Mandatory = $true)][object]$Event,
+        [string]$ChatName
+    )
+
+    $eventId = "$(Get-AgentNotificationProperty -InputObject $Event -Name 'id')"
+    if ($eventId -notmatch '^[0-9a-fA-F]{32}$') { throw 'The notification event ID is invalid.' }
+    $project = Get-AgentNotificationProjectName -Event $Event
+    $source = "$(Get-AgentNotificationProperty -InputObject $Event -Name 'source')".Trim()
+    if ([string]::IsNullOrWhiteSpace($source)) { $source = 'Agent' }
+    if ([string]::IsNullOrWhiteSpace($ChatName)) { $ChatName = Get-AgentNotificationChatName -Event $Event }
+
+    $title = "$project - $source"
+    $body = ConvertTo-AgentNotificationPreview -Value $ChatName -MaximumLength 60
+    $activationUri = "agentnotify://open/$eventId"
+    $escapedTitle = [System.Security.SecurityElement]::Escape($title)
+    $escapedBody = [System.Security.SecurityElement]::Escape($body)
+    $escapedUri = [System.Security.SecurityElement]::Escape($activationUri)
+    return "<toast duration=`"short`"><visual><binding template=`"ToastGeneric`"><text>$escapedTitle</text><text>$escapedBody</text></binding></visual><actions><action content=`"Open chat`" arguments=`"$escapedUri`" activationType=`"protocol`" /></actions><audio src=`"ms-winsoundevent:Notification.Default`" /></toast>"
+}
+
 function Show-AgentNotificationToast {
     param([Parameter(Mandatory = $true)][object]$Event)
 
-    $title = "Agent Notifications - $($Event.source) $($Event.status)"
-    $body = "$($Event.project) - pane $($Event.pane)"
-    if (-not [string]::IsNullOrWhiteSpace("$($Event.message)")) {
-        $body += "`n$($Event.message)"
-    }
-
     [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
     [void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
-    $escapedTitle = [System.Security.SecurityElement]::Escape($title)
-    $escapedBody = [System.Security.SecurityElement]::Escape($body)
     $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
-    $xml.LoadXml("<toast><visual><binding template=`"ToastGeneric`"><text>$escapedTitle</text><text>$escapedBody</text></binding></visual><audio src=`"ms-winsoundevent:Notification.Default`" /></toast>")
+    $xml.LoadXml((New-AgentNotificationToastXml -Event $Event))
     $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
+    $toast.ExpirationTime = [DateTimeOffset]::Now.AddSeconds(10)
     $appId = (Get-StartApps | Where-Object { $_.Name -eq 'Windows PowerShell' } | Select-Object -First 1 -ExpandProperty AppID)
     if ([string]::IsNullOrWhiteSpace($appId)) { throw 'Windows PowerShell application identity was not found.' }
     [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast)
@@ -471,9 +511,12 @@ Export-ModuleMember -Function @(
     'Find-AgentNotificationProjectProfile',
     'Write-AgentNotificationEvent',
     'Read-AgentNotificationEvents',
+    'Find-AgentNotificationEventById',
+    'ConvertFrom-AgentNotificationUri',
     'Clear-AgentNotificationEvents',
     'Set-AgentNotificationHandled',
     'Set-AllAgentNotificationsHandled',
+    'New-AgentNotificationToastXml',
     'Show-AgentNotificationToast',
     'Test-AgentNotificationTarget'
 )

@@ -5,6 +5,7 @@ $modulePath = Join-Path $repoRoot 'agent-notifications\AgentNotifications.psm1'
 $receiverPath = Join-Path $repoRoot 'agent-notifications\Receive-AgentNotification.ps1'
 $centerPath = Join-Path $repoRoot 'agent-notifications\Show-AgentNotificationCenter.ps1'
 $installerPath = Join-Path $repoRoot 'agent-notifications\Install-AgentNotifications.ps1'
+$handlerPath = Join-Path $repoRoot 'agent-notifications\Open-AgentNotification.ps1'
 Import-Module $modulePath -Force -DisableNameChecking
 . $profilePath
 
@@ -54,6 +55,18 @@ try {
     Assert-Equal $approval.sessionId 'codex-session' 'Hook session ID was not retained for chat-name lookup'
     Assert-True (-not $approval.handled) 'New notification was unexpectedly marked handled'
     Assert-Equal (Get-AgentNotificationProjectName ([pscustomobject]@{ project = 'power_shell (d C:\Users\example\dev\power_shell)' })) 'power_shell' 'Project path was not removed from the compact name'
+    $toastXml = New-AgentNotificationToastXml -Event $approval -ChatName 'Fix & verify <toast>'
+    Assert-True ($toastXml -match '<toast duration="short">') 'Toast was not configured with short native duration'
+    Assert-True ($toastXml -match '<text>sample-project - Codex</text>') 'Toast title was not compact project and source context'
+    Assert-True ($toastXml -match '<text>Fix &amp; verify &lt;toast&gt;</text>') 'Toast chat name was not XML escaped'
+    Assert-True ($toastXml -match ('arguments="agentnotify://open/' + $approval.id + '" activationType="protocol"')) 'Toast is missing its clickable protocol action'
+    Assert-True ($toastXml -match 'ms-winsoundevent:Notification.Default') 'Toast sound was removed'
+    Assert-True ($toastXml -notmatch 'pane|Run tests|C:\\') 'Toast leaked pane, message, or path details'
+    Assert-Equal (ConvertFrom-AgentNotificationUri -Uri ("agentnotify://open/$($approval.id)")) $approval.id 'Valid toast URI did not return its event ID'
+    Assert-True ($null -eq (ConvertFrom-AgentNotificationUri -Uri ("https://open/$($approval.id)"))) 'URI parser accepted the wrong scheme'
+    Assert-True ($null -eq (ConvertFrom-AgentNotificationUri -Uri ("agentnotify://wrong/$($approval.id)"))) 'URI parser accepted the wrong host'
+    Assert-True ($null -eq (ConvertFrom-AgentNotificationUri -Uri 'agentnotify://open/not-an-id')) 'URI parser accepted an invalid event ID'
+    Assert-True ($null -eq (ConvertFrom-AgentNotificationUri -Uri ("agentnotify://open/$($approval.id)/"))) 'URI parser accepted a non-canonical path'
 
     @(
         '{"id":"codex-session","thread_name":"Earlier name"}',
@@ -136,6 +149,8 @@ try {
     $events = @(Read-AgentNotificationEvents -StateRoot $stateRoot)
     Assert-Equal $events.Count 2 'Event log did not round-trip both events'
     Assert-Equal $events[1].source 'Claude' 'Event log changed event content'
+    Assert-Equal (Find-AgentNotificationEventById -EventId $approval.id -StateRoot $stateRoot).source 'Codex' 'Exact event lookup did not find the stored event'
+    Assert-True ($null -eq (Find-AgentNotificationEventById -EventId ('f' * 32) -StateRoot $stateRoot)) 'Exact event lookup returned a different event'
     Assert-True (-not (Test-AgentNotificationHandled -Event $events[0])) 'Unread notification did not render as unhandled'
     Assert-True (Set-AgentNotificationHandled -EventId $approval.id -StateRoot $stateRoot) 'Handled notification was not updated'
     $events = @(Read-AgentNotificationEvents -StateRoot $stateRoot)
@@ -164,11 +179,16 @@ try {
     Assert-True ($centerSource -match '\$command -eq ''q''\) \{ break \}') 'Close is not dispatched by Enter'
     $profileSource = Get-Content -Raw -LiteralPath $profilePath
     Assert-True ($profileSource -match "---==\[ Project Launcher \]==---") 'Project launcher is missing its matching cyan banner title'
+    Assert-True ($centerSource -match 'Open-AgentNotificationChat') 'Notification center does not use shared chat routing'
+    $handlerSource = Get-Content -Raw -LiteralPath $handlerPath
+    Assert-True ($handlerSource -match 'ConvertFrom-AgentNotificationUri') 'Toast activation handler does not validate its URI'
+    Assert-True ($handlerSource -match 'Find-AgentNotificationEventById') 'Toast activation handler does not resolve the exact event'
+    Assert-True ($handlerSource -match 'Open-AgentNotificationChat') 'Toast activation handler does not use shared chat routing'
 
     Clear-AgentNotificationEvents -StateRoot $stateRoot
     Assert-Equal @(Read-AgentNotificationEvents -StateRoot $stateRoot).Count 0 'Clear did not empty notification history'
 
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerPath -CodexHome $codexHome -StateRoot $stateRoot | Out-Null
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerPath -CodexHome $codexHome -StateRoot $stateRoot -SkipProtocolRegistration | Out-Null
     $codexProfile = Join-Path $codexHome 'agent-notifications.config.toml'
     $claudeSettings = Join-Path $stateRoot 'claude-settings.json'
     Assert-True (Test-Path -LiteralPath $codexProfile) 'Installer did not create the Codex profile'
@@ -177,6 +197,11 @@ try {
     $parsedClaude = Get-Content -Raw -LiteralPath $claudeSettings | ConvertFrom-Json
     Assert-True ($null -ne $parsedClaude.hooks.Notification) 'Claude notification hook is missing'
     Assert-True ($null -ne $parsedClaude.hooks.Stop) 'Claude stop hook is missing'
+    $installerSource = Get-Content -Raw -LiteralPath $installerPath
+    Assert-True ($installerSource -match 'HKCU:\\Software\\Classes\\agentnotify') 'Installer does not register the user-scoped toast protocol'
+    Assert-True ($installerSource -match 'AgentNotificationsOwner') 'Protocol registration is missing its ownership marker'
+    Assert-True ($installerSource -match 'Open-AgentNotification\.ps1') 'Protocol registration does not invoke the activation handler'
+    Assert-True ($installerSource -match 'registeredOwner -eq \$protocolOwner') 'Uninstall does not protect unowned protocol registrations'
 
     $freshControl = Get-AgentControlCenterArguments -LauncherRunning $false -NotificationsRunning $false
     Assert-True ($freshControl -match 'new-tab --title Projects') 'Fresh control center does not create the launcher pane first'
@@ -290,6 +315,47 @@ try {
         $focusGuard.Dispose()
     }
 
+    $routingWindow = 'agent-project-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    $routingEvent = [pscustomobject][ordered]@{
+        id = [guid]::NewGuid().ToString('N'); timestamp = [DateTimeOffset]::Now.ToString('o')
+        source = 'Codex'; status = 'finished'; project = 'routing-project'
+        profileGuid = '{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}'; pane = 2
+        window = $routingWindow; guard = "Local\AgentNotifications.Pane.$routingWindow.2"
+        message = 'done'; sessionId = 'routing-session'; handled = $false
+    }
+    [void](Write-AgentNotificationEvent -Event $routingEvent -StateRoot $stateRoot)
+    $routingPaneGuard = New-Object System.Threading.Mutex($false, $routingEvent.guard)
+    $script:CapturedStartProcess = $null
+    function Start-Process {
+        param([string]$FilePath, [object]$ArgumentList)
+        $script:CapturedStartProcess = [pscustomobject]@{ FilePath = $FilePath; ArgumentList = "$ArgumentList" }
+    }
+    try {
+        $routingResult = Open-AgentNotificationChat -Event $routingEvent -StateRoot $stateRoot
+        Assert-True $routingResult.Succeeded 'Shared chat routing did not focus an existing exact pane'
+        Assert-True ($script:CapturedStartProcess.ArgumentList -match 'move-focus nextInOrder') 'Shared chat routing focused the wrong pane'
+        Assert-True (Test-AgentNotificationHandled -Event (Find-AgentNotificationEventById -EventId $routingEvent.id -StateRoot $stateRoot)) 'Successful shared routing did not mark the event handled'
+    } finally {
+        Remove-Item -LiteralPath Function:\Start-Process
+        $routingPaneGuard.Dispose()
+    }
+
+    $failedRoutingEvent = $routingEvent.PSObject.Copy()
+    $failedRoutingEvent.id = [guid]::NewGuid().ToString('N')
+    $failedRoutingEvent.guard = "Local\AgentNotifications.Pane.$routingWindow.3"
+    $failedRoutingEvent.handled = $false
+    [void](Write-AgentNotificationEvent -Event $failedRoutingEvent -StateRoot $stateRoot)
+    $routingWindowGuard = New-Object System.Threading.Mutex($false, "Local\AgentNotifications.Project.$routingWindow")
+    try {
+        $failedRoutingResult = Open-AgentNotificationChat -Event $failedRoutingEvent -StateRoot $stateRoot
+        Assert-True (-not $failedRoutingResult.Succeeded) 'Shared chat routing reported success for a missing original pane'
+        Assert-True (-not (Test-AgentNotificationHandled -Event (Find-AgentNotificationEventById -EventId $failedRoutingEvent.id -StateRoot $stateRoot))) 'Failed shared routing marked the event handled'
+    } finally {
+        $routingWindowGuard.Dispose()
+    }
+
+    Clear-AgentNotificationEvents -StateRoot $stateRoot
+
     $oldEnabled = $env:AI_NOTIFY_ENABLED
     $oldSource = $env:AI_NOTIFY_SOURCE
     $oldProject = $env:AI_NOTIFY_PROJECT
@@ -317,7 +383,7 @@ try {
         $env:AI_NOTIFY_GUARD = $oldGuard
     }
 
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerPath -Uninstall -CodexHome $codexHome -StateRoot $stateRoot | Out-Null
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerPath -Uninstall -CodexHome $codexHome -StateRoot $stateRoot -SkipProtocolRegistration | Out-Null
     Assert-True (-not (Test-Path -LiteralPath $codexProfile)) 'Uninstall left the Codex profile behind'
     Assert-True (-not (Test-Path -LiteralPath $claudeSettings)) 'Uninstall left Claude settings behind'
 

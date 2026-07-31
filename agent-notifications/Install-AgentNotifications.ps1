@@ -2,6 +2,7 @@
 param(
     [switch]$Uninstall,
     [switch]$Force,
+    [switch]$SkipProtocolRegistration,
     [string]$CodexHome = (Join-Path $env:USERPROFILE '.codex'),
     [string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'AgentNotifications')
 )
@@ -11,6 +12,9 @@ $receiverPath = Join-Path $PSScriptRoot 'Receive-AgentNotification.ps1'
 $codexProfilePath = Join-Path $CodexHome 'agent-notifications.config.toml'
 $claudeSettingsPath = Join-Path $StateRoot 'claude-settings.json'
 $marker = '# Managed by power_shell/agent-notifications.'
+$protocolPath = 'HKCU:\Software\Classes\agentnotify'
+$protocolOwnerName = 'AgentNotificationsOwner'
+$protocolOwner = 'power_shell/agent-notifications'
 
 if ($Uninstall) {
     foreach ($path in @($codexProfilePath, $claudeSettingsPath)) {
@@ -19,6 +23,13 @@ if ($Uninstall) {
             if ($owned -and $PSCmdlet.ShouldProcess($path, 'Remove agent notification configuration')) {
                 Remove-Item -LiteralPath $path -Force
             }
+        }
+    }
+    if (-not $SkipProtocolRegistration -and (Test-Path -LiteralPath $protocolPath)) {
+        $registeredOwner = (Get-Item -LiteralPath $protocolPath).GetValue($protocolOwnerName, '')
+        if ($registeredOwner -eq $protocolOwner -and
+            $PSCmdlet.ShouldProcess($protocolPath, 'Remove agent notification URL protocol')) {
+            Remove-Item -LiteralPath $protocolPath -Recurse -Force
         }
     }
     Write-Host 'Agent notification launcher configuration removed.' -ForegroundColor Green
@@ -83,7 +94,27 @@ if ($PSCmdlet.ShouldProcess($claudeSettingsPath, 'Write Claude notification sett
     $claudeSettings | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $claudeSettingsPath -Encoding UTF8
 }
 
+if (-not $SkipProtocolRegistration) {
+    if (Test-Path -LiteralPath $protocolPath) {
+        $registeredOwner = (Get-Item -LiteralPath $protocolPath).GetValue($protocolOwnerName, '')
+        if ($registeredOwner -ne $protocolOwner -and -not $Force) {
+            throw "Refusing to overwrite unowned URL protocol: $protocolPath. Use -Force to replace it."
+        }
+    }
+    if ($PSCmdlet.ShouldProcess($protocolPath, 'Register agent notification URL protocol')) {
+        $commandPath = Join-Path $protocolPath 'shell\open\command'
+        [void](New-Item -Path $commandPath -Force)
+        Set-Item -LiteralPath $protocolPath -Value 'URL:Agent Notification Protocol'
+        Set-ItemProperty -LiteralPath $protocolPath -Name 'URL Protocol' -Value ''
+        Set-ItemProperty -LiteralPath $protocolPath -Name $protocolOwnerName -Value $protocolOwner
+        $handlerPath = Join-Path $PSScriptRoot 'Open-AgentNotification.ps1'
+        $protocolCommand = '"powershell.exe" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Uri "%1" -StateRoot "{1}"' -f $handlerPath, $StateRoot
+        Set-Item -LiteralPath $commandPath -Value $protocolCommand
+    }
+}
+
 Write-Host 'Agent notification launcher configuration installed.' -ForegroundColor Green
 Write-Host "Codex profile:   $codexProfilePath"
 Write-Host "Claude settings: $claudeSettingsPath"
+if (-not $SkipProtocolRegistration) { Write-Host 'Toast action:      agentnotify://open/<event-id>' }
 Write-Host 'On the first Codex launch, open /hooks and trust the two profile hooks.' -ForegroundColor Yellow
