@@ -15,8 +15,8 @@ function Show-Center {
     param([object[]]$Events, [string]$InputBuffer, [string]$Notice)
 
     Clear-Host
-    Write-Host 'Agent Notifications' -ForegroundColor Cyan
-    Write-Host 'Type an event number to open its chat.  c = clear  q = close' -ForegroundColor DarkGray
+    Write-Host '---==[ Agent Notifications ]==---' -ForegroundColor Cyan
+    Write-Host 'number = open chat   d = done all   c = clear   q = close' -ForegroundColor DarkGray
     Write-Host ''
 
     $displayEntries = @(Get-AgentNotificationDisplayEntries -Events $Events)
@@ -73,6 +73,14 @@ try {
         if ([Console]::KeyAvailable) {
             $key = [Console]::ReadKey($true)
             if ($key.Key -eq [ConsoleKey]::Q) { break }
+            if ($key.Key -eq [ConsoleKey]::D -and [string]::IsNullOrEmpty($inputBuffer)) {
+                [void](Set-AllAgentNotificationsHandled -StateRoot $StateRoot)
+                $events = @(Read-AgentNotificationEvents -StateRoot $StateRoot)
+                $notice = ''
+                $lastSignature = ''
+                $needsRender = $true
+                continue
+            }
             if ($key.Key -eq [ConsoleKey]::C -and [string]::IsNullOrEmpty($inputBuffer)) {
                 Clear-AgentNotificationEvents -StateRoot $StateRoot
                 $events = @()

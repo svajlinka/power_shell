@@ -1,11 +1,12 @@
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$profilePath = Join-Path $repoRoot 'powershell-profile.ps1'
 $modulePath = Join-Path $repoRoot 'agent-notifications\AgentNotifications.psm1'
 $receiverPath = Join-Path $repoRoot 'agent-notifications\Receive-AgentNotification.ps1'
 $centerPath = Join-Path $repoRoot 'agent-notifications\Show-AgentNotificationCenter.ps1'
 $installerPath = Join-Path $repoRoot 'agent-notifications\Install-AgentNotifications.ps1'
 Import-Module $modulePath -Force -DisableNameChecking
-. (Join-Path $repoRoot 'powershell-profile.ps1')
+. $profilePath
 
 $script:Assertions = 0
 function Assert-Equal {
@@ -139,6 +140,10 @@ try {
     Assert-True (Set-AgentNotificationHandled -EventId $approval.id -StateRoot $stateRoot) 'Handled notification was not updated'
     $events = @(Read-AgentNotificationEvents -StateRoot $stateRoot)
     Assert-True (Test-AgentNotificationHandled -Event $events[0]) 'Handled state did not persist after rereading the event log'
+    Assert-Equal (Set-AllAgentNotificationsHandled -StateRoot $stateRoot) 1 'Done-all did not update every remaining unhandled notification'
+    $events = @(Read-AgentNotificationEvents -StateRoot $stateRoot)
+    Assert-True (Test-AgentNotificationHandled -Event $events[1]) 'Done-all handled state did not persist'
+    Assert-Equal (Set-AllAgentNotificationsHandled -StateRoot $stateRoot) 0 'Done-all rewrote notifications that were already handled'
     Assert-True (-not (Test-AgentNotificationHandled -Event ([pscustomobject]@{ id = 'legacy' }))) 'Legacy notification without handled state was not treated as unhandled'
     $compactLine = Format-AgentNotificationDisplayLine -Event $events[0] -Number 1 `
         -CodexSessionIndexPath $codexIndex -CodexHistoryPath $codexHistory -ClaudeHistoryPath $claudeHistory
@@ -149,6 +154,10 @@ try {
     Assert-True ($centerSource -match 'Write-Host \$key\.KeyChar -NoNewline') 'Typing a selection does not update the prompt directly'
     Assert-True ($centerSource -match 'Write-Host "`b `b" -NoNewline') 'Backspace does not update the prompt directly'
     Assert-True ($centerSource -notmatch '\$notice = "(?:Focused|Reopened)') 'Successful chat actions still emit status notices'
+    Assert-True ($centerSource -match "---==\[ Agent Notifications \]==---") 'Notification pane is missing its cyan banner title'
+    Assert-True ($centerSource -match 'Set-AllAgentNotificationsHandled') 'Notification pane is missing the done-all shortcut'
+    $profileSource = Get-Content -Raw -LiteralPath $profilePath
+    Assert-True ($profileSource -match "---==\[ Project Launcher \]==---") 'Project launcher is missing its matching cyan banner title'
 
     Clear-AgentNotificationEvents -StateRoot $stateRoot
     Assert-Equal @(Read-AgentNotificationEvents -StateRoot $stateRoot).Count 0 'Clear did not empty notification history'

@@ -349,19 +349,23 @@ function Clear-AgentNotificationEvents {
     }
 }
 
-function Set-AgentNotificationHandled {
+function Update-AgentNotificationHandledEvents {
     param(
-        [Parameter(Mandatory = $true)][string]$EventId,
+        [AllowNull()][string]$EventId,
+        [switch]$All,
         [string]$StateRoot
     )
 
     $root = Get-AgentNotificationStateRoot -StateRoot $StateRoot
     $eventFile = Join-Path $root 'events.jsonl'
-    if (-not (Test-Path -LiteralPath $eventFile)) { return $false }
+    if (-not (Test-Path -LiteralPath $eventFile)) {
+        return [pscustomobject]@{ matched = $false; changedCount = 0 }
+    }
 
     $mutex = New-Object System.Threading.Mutex($false, 'Local\AgentNotifications.EventLog')
     $hasLock = $false
-    $updated = $false
+    $matched = $false
+    $changedCount = 0
     try {
         try {
             $hasLock = $mutex.WaitOne(5000)
@@ -375,15 +379,18 @@ function Set-AgentNotificationHandled {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
             try {
                 $event = $line | ConvertFrom-Json
-                if ("$(Get-AgentNotificationProperty $event 'id')" -eq $EventId) {
-                    $event | Add-Member -NotePropertyName handled -NotePropertyValue $true -Force
-                    $line = $event | ConvertTo-Json -Compress -Depth 8
-                    $updated = $true
+                if ($All -or "$(Get-AgentNotificationProperty $event 'id')" -eq $EventId) {
+                    $matched = $true
+                    if (-not (Test-AgentNotificationHandled -Event $event)) {
+                        $event | Add-Member -NotePropertyName handled -NotePropertyValue $true -Force
+                        $line = $event | ConvertTo-Json -Compress -Depth 8
+                        $changedCount++
+                    }
                 }
             } catch { }
             $output.Add($line)
         }
-        if ($updated) {
+        if ($changedCount -gt 0) {
             $temporaryFile = Join-Path $root ('.events-' + [guid]::NewGuid().ToString('N') + '.tmp')
             try {
                 [IO.File]::WriteAllLines($temporaryFile, $output.ToArray(), (New-Object Text.UTF8Encoding($false)))
@@ -396,7 +403,24 @@ function Set-AgentNotificationHandled {
         if ($hasLock) { $mutex.ReleaseMutex() }
         $mutex.Dispose()
     }
-    return $updated
+    return [pscustomobject]@{ matched = $matched; changedCount = $changedCount }
+}
+
+function Set-AgentNotificationHandled {
+    param(
+        [Parameter(Mandatory = $true)][string]$EventId,
+        [string]$StateRoot
+    )
+
+    $result = Update-AgentNotificationHandledEvents -EventId $EventId -StateRoot $StateRoot
+    return [bool]$result.matched
+}
+
+function Set-AllAgentNotificationsHandled {
+    param([string]$StateRoot)
+
+    $result = Update-AgentNotificationHandledEvents -All -StateRoot $StateRoot
+    return [int]$result.changedCount
 }
 
 function Show-AgentNotificationToast {
@@ -449,6 +473,7 @@ Export-ModuleMember -Function @(
     'Read-AgentNotificationEvents',
     'Clear-AgentNotificationEvents',
     'Set-AgentNotificationHandled',
+    'Set-AllAgentNotificationsHandled',
     'Show-AgentNotificationToast',
     'Test-AgentNotificationTarget'
 )

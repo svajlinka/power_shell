@@ -319,6 +319,8 @@ function Show-ProjectLauncher {
         $list     = @($profiles | Where-Object { -not $_.hidden } | Sort-Object -Property name)
 
         Write-Host ""
+        Write-Host '---==[ Project Launcher ]==---' -ForegroundColor Cyan
+        Write-Host ''
         for ($i = 0; $i -lt $list.Count; $i++) {
             "{0,2}. {1}" -f ($i + 1), $list[$i].name
         }
