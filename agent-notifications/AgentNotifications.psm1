@@ -175,23 +175,32 @@ function Get-AgentNotificationChatName {
                     $record = $line | ConvertFrom-Json
                     if ("$(Get-AgentNotificationProperty $record 'id')" -eq $sessionId) {
                         $candidate = "$(Get-AgentNotificationProperty $record 'thread_name')".Trim()
-                        if (-not [string]::IsNullOrWhiteSpace($candidate)) { $name = $candidate }
+                        if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+                            $name = $candidate
+                            break
+                        }
                     }
                 } catch { }
             }
         }
         if ([string]::IsNullOrWhiteSpace($name) -and (Test-Path -LiteralPath $CodexHistoryPath)) {
-            foreach ($line in [IO.File]::ReadLines($CodexHistoryPath, [Text.Encoding]::UTF8)) {
-                if ([string]::IsNullOrWhiteSpace($line)) { continue }
-                try {
-                    $record = $line | ConvertFrom-Json
-                    $candidate = "$(Get-AgentNotificationProperty $record 'text')".Trim()
-                    if ("$(Get-AgentNotificationProperty $record 'session_id')" -eq $sessionId -and
-                        -not [string]::IsNullOrWhiteSpace($candidate) -and -not $candidate.StartsWith('/')) {
-                        $name = $candidate
-                        break
-                    }
-                } catch { }
+            $lines = [IO.File]::ReadLines($CodexHistoryPath, [Text.Encoding]::UTF8).GetEnumerator()
+            try {
+                while ($lines.MoveNext()) {
+                    $line = $lines.Current
+                    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                    try {
+                        $record = $line | ConvertFrom-Json
+                        $candidate = "$(Get-AgentNotificationProperty $record 'text')".Trim()
+                        if ("$(Get-AgentNotificationProperty $record 'session_id')" -eq $sessionId -and
+                            -not [string]::IsNullOrWhiteSpace($candidate) -and -not $candidate.StartsWith('/')) {
+                            $name = $candidate
+                            break
+                        }
+                    } catch { }
+                }
+            } finally {
+                $lines.Dispose()
             }
         }
     } elseif (-not [string]::IsNullOrWhiteSpace($sessionId) -and $source -eq 'Claude' -and (Test-Path -LiteralPath $ClaudeHistoryPath)) {

@@ -94,7 +94,7 @@ try {
     ) | Set-Content -LiteralPath $codexHistory -Encoding UTF8
     Assert-Equal (Get-AgentNotificationChatName -Event $approval -CodexSessionIndexPath $codexIndex `
         -CodexHistoryPath $codexHistory -ClaudeHistoryPath $claudeHistory) `
-        'Fixa räksmörgåsen' 'Codex chat name was not read as UTF-8 from the latest session index entry'
+        'Earlier name' 'Codex chat name did not keep the earliest indexed title after a later title change'
     $historyEvent = [pscustomobject]@{ source = 'Codex'; sessionId = 'history-session' }
     Assert-Equal (Get-AgentNotificationChatName -Event $historyEvent `
         -CodexSessionIndexPath (Join-Path $testRoot 'missing-index.jsonl') `
@@ -173,7 +173,7 @@ try {
     Assert-True (-not (Test-AgentNotificationHandled -Event ([pscustomobject]@{ id = 'legacy' }))) 'Legacy notification without handled state was not treated as unhandled'
     $compactLine = Format-AgentNotificationDisplayLine -Event $events[0] -Number 1 `
         -CodexSessionIndexPath $codexIndex -CodexHistoryPath $codexHistory -ClaudeHistoryPath $claudeHistory
-    Assert-True ($compactLine -match '^\s*1\s+\d{2}:\d{2}:\d{2}\s+sample-project\s+Fixa räksmörgåsen$') 'Compact notification row did not contain only number, time, project, and chat name'
+    Assert-True ($compactLine -match '^\s*1\s+\d{2}:\d{2}:\d{2}\s+sample-project\s+Earlier name$') 'Compact notification row did not contain only number, time, project, and chat name'
     Assert-True ($compactLine -notmatch 'Codex|approval|pane|Run tests|C:\\') 'Compact notification row leaked hidden routing or message details'
 
     $centerSource = Get-Content -Raw -LiteralPath $centerPath
