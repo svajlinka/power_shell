@@ -16,24 +16,16 @@ function Show-Center {
 
     Clear-Host
     Write-Host '---==[ Agent Notifications ]==---' -ForegroundColor Cyan
-    Write-Host 'Enter = latest   number/d/c/q + Enter = run command' -ForegroundColor DarkGray
+    Write-Host 'Enter = latest   number/d/d12/d12 d3/c/q + Enter = run command' -ForegroundColor DarkGray
     Write-Host ''
 
     $displayEntries = @(Get-AgentNotificationDisplayEntries -Events $Events)
     if ($displayEntries.Count -eq 0) {
         Write-Host '  No notifications yet.' -ForegroundColor DarkGray
     } else {
-        $chatNames = @{}
         foreach ($entry in $displayEntries) {
             $event = $entry.event
-            $source = "$($event.source)"
-            $sessionId = "$($event.sessionId)"
-            $chatKey = "$source`0$sessionId"
-            if (-not $chatNames.ContainsKey($chatKey)) {
-                $chatNames[$chatKey] = Get-AgentNotificationChatName -Event $event
-            }
-            $line = Format-AgentNotificationDisplayLine -Event $event -Number $entry.number `
-                -ChatName $chatNames[$chatKey]
+            $line = Format-AgentNotificationDisplayLine -Event $event -Number $entry.number
             $color = if (Test-AgentNotificationHandled -Event $event) { 'Blue' } else { 'Yellow' }
             Write-Host $line -ForegroundColor $color
         }
@@ -90,11 +82,31 @@ try {
             if ($key.Key -eq [ConsoleKey]::Enter) {
                 $command = $inputBuffer.ToLowerInvariant()
                 if ($command -eq 'q') { break }
-                if ($command -eq 'd') {
-                    [void](Set-AllAgentNotificationsHandled -StateRoot $StateRoot)
+                $done = ConvertFrom-AgentNotificationDoneCommand -Command $command
+                if ($null -ne $done) {
+                    if ($done.all) {
+                        [void](Set-AllAgentNotificationsHandled -StateRoot $StateRoot)
+                        $notice = ''
+                    } else {
+                        $doneIds = New-Object System.Collections.Generic.List[string]
+                        $unknown = New-Object System.Collections.Generic.List[int]
+                        foreach ($number in @($done.numbers)) {
+                            $target = Find-AgentNotificationDisplayEvent -Events $events -Number $number
+                            if ($null -eq $target) { $unknown.Add($number); continue }
+                            $doneIds.Add("$($target.id)")
+                        }
+                        if ($doneIds.Count -gt 0) {
+                            [void](Set-AgentNotificationHandled -EventId $doneIds.ToArray() -StateRoot $StateRoot)
+                        }
+                        $notice = ''
+                        if (@($done.numbers).Count -eq 0) {
+                            $notice = 'Enter a valid event number.'
+                        } elseif ($unknown.Count -gt 0) {
+                            $notice = "No notification numbered $($unknown -join ', ')."
+                        }
+                    }
                     $events = @(Read-AgentNotificationEvents -StateRoot $StateRoot)
                     $inputBuffer = ''
-                    $notice = ''
                     $lastSignature = ''
                     $needsRender = $true
                     continue
@@ -129,14 +141,27 @@ try {
                 $needsRender = $true
                 continue
             }
-            if ([char]::IsDigit($key.KeyChar) -and $inputBuffer -notmatch '^[dcq]$') {
+            if ([char]::IsDigit($key.KeyChar) -and $inputBuffer -notmatch '^[cq]$') {
                 $inputBuffer += $key.KeyChar
                 $notice = ''
                 Write-Host $key.KeyChar -NoNewline -ForegroundColor Green
                 continue
             }
-            if ([string]::IsNullOrEmpty($inputBuffer) -and "$($key.KeyChar)" -match '^[dDcCqQ]$') {
-                $inputBuffer = "$($key.KeyChar)".ToLowerInvariant()
+            $typed = "$($key.KeyChar)".ToLowerInvariant()
+            if ($typed -eq 'd' -and ($inputBuffer.Length -eq 0 -or $inputBuffer -match '^d[d\d\s]*\d\s*$')) {
+                $inputBuffer += $typed
+                $notice = ''
+                Write-Host $typed -NoNewline -ForegroundColor Green
+                continue
+            }
+            if ($typed -eq ' ' -and $inputBuffer -match '^d[d\d\s]*\d$') {
+                $inputBuffer += $typed
+                $notice = ''
+                Write-Host $typed -NoNewline -ForegroundColor Green
+                continue
+            }
+            if ([string]::IsNullOrEmpty($inputBuffer) -and $typed -match '^[cq]$') {
+                $inputBuffer = $typed
                 $notice = ''
                 Write-Host $inputBuffer -NoNewline -ForegroundColor Green
             }

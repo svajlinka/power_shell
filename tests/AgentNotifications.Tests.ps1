@@ -163,6 +163,35 @@ try {
     Assert-Equal $displayEntries[98].number 1 'Latest notification at the bottom was not numbered 1'
     Assert-Equal (Find-AgentNotificationDisplayEvent -Events $manyEvents -Number 1).id 'event-120' 'Selection 1 did not resolve to the latest notification'
 
+    $chatEvents = @(
+        [pscustomobject]@{ id = 'a1'; source = 'Codex'; sessionId = 'session-a' },
+        [pscustomobject]@{ id = 'b1'; source = 'Claude'; sessionId = 'session-b' },
+        [pscustomobject]@{ id = 'a2'; source = 'Codex'; sessionId = 'session-a' },
+        [pscustomobject]@{ id = 'c1'; source = 'Claude'; sessionId = 'session-a' },
+        [pscustomobject]@{ id = 'a3'; source = 'Codex'; sessionId = 'session-a' }
+    )
+    $chatDisplay = @(Get-AgentNotificationDisplayEvents -Events $chatEvents)
+    Assert-Equal $chatDisplay.Count 3 'Notification list did not collapse to one row per chat'
+    Assert-Equal $chatDisplay[0].id 'b1' 'Superseded chat rows did not keep their original chronological position'
+    Assert-Equal $chatDisplay[1].id 'c1' 'Chats sharing a session id across sources were merged'
+    Assert-Equal $chatDisplay[2].id 'a3' 'Repeated chat did not keep only its latest notification'
+    $chatEntries = @(Get-AgentNotificationDisplayEntries -Events $chatEvents)
+    Assert-Equal $chatEntries[0].number 3 'Collapsed list did not number the oldest visible chat highest'
+    Assert-Equal (Find-AgentNotificationDisplayEvent -Events $chatEvents -Number 1).id 'a3' 'Selection 1 did not resolve to the latest chat notification'
+
+    $sessionlessEvents = @(
+        [pscustomobject]@{ id = 't1'; source = 'Test'; sessionId = '' },
+        [pscustomobject]@{ id = 't2'; source = 'Test'; sessionId = '' }
+    )
+    Assert-Equal (@(Get-AgentNotificationDisplayEvents -Events $sessionlessEvents)).Count 2 'Notifications without a session id were collapsed into one row'
+
+    $busyEvents = @(1..120 | ForEach-Object {
+        [pscustomobject]@{ id = "busy-$_"; source = 'Codex'; sessionId = "session-$($_ % 5)" }
+    })
+    $busyDisplay = @(Get-AgentNotificationDisplayEvents -Events $busyEvents)
+    Assert-Equal $busyDisplay.Count 5 'Busy chats did not collapse to one row each'
+    Assert-Equal $busyDisplay[4].id 'busy-120' 'Latest busy-chat notification was not placed at the bottom'
+
     $stopPayload = [pscustomobject]@{
         hook_event_name = 'Stop'
         last_assistant_message = ('x' * 250)
@@ -192,6 +221,32 @@ try {
     Assert-True (Test-AgentNotificationHandled -Event $events[1]) 'Done-all handled state did not persist'
     Assert-Equal (Set-AllAgentNotificationsHandled -StateRoot $stateRoot) 0 'Done-all rewrote notifications that were already handled'
     Assert-True (-not (Test-AgentNotificationHandled -Event ([pscustomobject]@{ id = 'legacy' }))) 'Legacy notification without handled state was not treated as unhandled'
+
+    Assert-True ($null -eq (ConvertFrom-AgentNotificationDoneCommand -Command '12')) 'A plain selection was parsed as a done command'
+    Assert-True ($null -eq (ConvertFrom-AgentNotificationDoneCommand -Command 'c')) 'Clear was parsed as a done command'
+    Assert-True ((ConvertFrom-AgentNotificationDoneCommand -Command 'd').all) 'Bare d no longer marks every notification handled'
+    $doneOne = ConvertFrom-AgentNotificationDoneCommand -Command 'D12'
+    Assert-True (-not $doneOne.all) 'd12 was treated as done-all'
+    Assert-Equal ($doneOne.numbers -join ',') '12' 'd12 did not select a single notification'
+    Assert-Equal ((ConvertFrom-AgentNotificationDoneCommand -Command 'd10 d12 d11').numbers -join ',') '10,12,11' 'Repeated d prefixes were not parsed as several notifications'
+    Assert-Equal ((ConvertFrom-AgentNotificationDoneCommand -Command 'd10 12 11').numbers -join ',') '10,12,11' 'Space-separated numbers were not parsed as several notifications'
+    Assert-Equal ((ConvertFrom-AgentNotificationDoneCommand -Command 'd7 d7').numbers -join ',') '7' 'A repeated number was not collapsed into one selection'
+    $doneZero = ConvertFrom-AgentNotificationDoneCommand -Command 'd0'
+    Assert-True (-not $doneZero.all) 'A numbered done command without a valid number fell back to done-all'
+    Assert-Equal $doneZero.numbers.Count 0 'Notification number 0 was accepted'
+
+    $doneRoot = Join-Path $testRoot 'done-state'
+    foreach ($n in 1..3) {
+        [void](Write-AgentNotificationEvent -StateRoot $doneRoot -Event ([pscustomobject]@{
+            id = "done-$n"; source = 'Codex'; sessionId = "done-session-$n"; handled = $false
+        }))
+    }
+    Assert-True (Set-AgentNotificationHandled -EventId @('done-1', 'done-3') -StateRoot $doneRoot) 'Marking several notifications handled did not match any event'
+    $doneEvents = @(Read-AgentNotificationEvents -StateRoot $doneRoot)
+    Assert-True (Test-AgentNotificationHandled -Event $doneEvents[0]) 'The first selected notification was not marked handled'
+    Assert-True (-not (Test-AgentNotificationHandled -Event $doneEvents[1])) 'An unselected notification was marked handled'
+    Assert-True (Test-AgentNotificationHandled -Event $doneEvents[2]) 'The second selected notification was not marked handled'
+    Assert-True (-not (Set-AgentNotificationHandled -EventId @('missing-1') -StateRoot $doneRoot)) 'Marking an unknown notification handled reported a match'
     $compactLine = Format-AgentNotificationDisplayLine -Event $events[0] -Number 1 `
         -CodexSessionIndexPath $codexIndex -CodexHistoryPath $codexHistory -ClaudeHistoryPath $claudeHistory
     Assert-True ($compactLine -match '^\s*1\s+\d{2}:\d{2}:\d{2}\s+sample-project\s+Earlier name$') 'Compact notification row did not contain only number, time, project, and chat name'
@@ -205,10 +260,13 @@ try {
     Assert-True ($centerSource -match 'Set-AllAgentNotificationsHandled') 'Notification pane is missing the done-all shortcut'
     Assert-True ($centerSource -match 'IsNullOrEmpty\(\$inputBuffer\)[\s\S]+?\$selection = 1') 'Blank Enter does not default to the latest notification'
     Assert-True ($centerSource -match 'Enter = latest') 'Notification help does not advertise the blank-Enter shortcut'
-    Assert-True ($centerSource -match '\$chatNames = @\{\}[\s\S]+?Format-AgentNotificationDisplayLine[\s\S]+?-ChatName') `
-        'Notification center does not reuse chat names while rendering multiple events from one session'
+    Assert-True ($centerSource -match 'Get-AgentNotificationDisplayEntries[\s\S]+?Format-AgentNotificationDisplayLine -Event \$event -Number \$entry\.number') `
+        'Notification center does not render one collapsed row per chat'
     Assert-True ($centerSource -notmatch '\$key\.Key -eq \[ConsoleKey\]::[DCQ]') 'A letter command still executes before Enter'
-    Assert-True ($centerSource -match '\$command -eq ''d''[\s\S]+?Set-AllAgentNotificationsHandled') 'Done-all is not dispatched by Enter'
+    Assert-True ($centerSource -match 'ConvertFrom-AgentNotificationDoneCommand[\s\S]+?\$done\.all[\s\S]+?Set-AllAgentNotificationsHandled') 'Done-all is not dispatched by Enter'
+    Assert-True ($centerSource -match 'Find-AgentNotificationDisplayEvent -Events \$events -Number \$number[\s\S]+?Set-AgentNotificationHandled -EventId') 'Numbered done commands do not mark their own notifications handled'
+    Assert-True ($centerSource -match '\$typed -eq ''d'' -and') 'Typing d before a notification number is not accepted'
+    Assert-True ($centerSource -match '\$typed -eq '' '' -and') 'Typing a space between notification numbers is not accepted'
     Assert-True ($centerSource -match '\$command -eq ''c''[\s\S]+?Clear-AgentNotificationEvents') 'Clear is not dispatched by Enter'
     Assert-True ($centerSource -match '\$command -eq ''q''\) \{ break \}') 'Close is not dispatched by Enter'
     $profileSource = Get-Content -Raw -LiteralPath $profilePath

@@ -280,11 +280,35 @@ function Get-AgentNotificationChatName {
     return ConvertTo-AgentNotificationPreview -Value $name -MaximumLength 60
 }
 
+function Get-AgentNotificationChatKey {
+    param([AllowNull()][object]$Event)
+
+    $sessionId = "$(Get-AgentNotificationProperty -InputObject $Event -Name 'sessionId')".Trim()
+    if (-not [string]::IsNullOrWhiteSpace($sessionId)) {
+        $source = "$(Get-AgentNotificationProperty -InputObject $Event -Name 'source')".Trim()
+        return "chat`0$source`0$sessionId"
+    }
+
+    $id = "$(Get-AgentNotificationProperty -InputObject $Event -Name 'id')".Trim()
+    if (-not [string]::IsNullOrWhiteSpace($id)) { return "event`0$id" }
+    return "event`0$([guid]::NewGuid().ToString('N'))"
+}
+
 function Get-AgentNotificationDisplayEvents {
     param([object[]]$Events, [int]$MaximumCount = 99)
 
     if ($null -eq $Events -or $Events.Count -eq 0 -or $MaximumCount -le 0) { return @() }
-    return @($Events | Select-Object -Last $MaximumCount)
+
+    $latestIndexes = @{}
+    for ($i = 0; $i -lt $Events.Count; $i++) {
+        $latestIndexes[(Get-AgentNotificationChatKey -Event $Events[$i])] = $i
+    }
+
+    $latest = New-Object System.Collections.Generic.List[object]
+    foreach ($index in @($latestIndexes.Values | Sort-Object)) {
+        $latest.Add($Events[$index])
+    }
+    return @($latest.ToArray() | Select-Object -Last $MaximumCount)
 }
 
 function Get-AgentNotificationDisplayEntries {
@@ -461,9 +485,32 @@ function Clear-AgentNotificationEvents {
     }
 }
 
+function ConvertFrom-AgentNotificationDoneCommand {
+    param([AllowNull()][string]$Command)
+
+    $text = "$Command".Trim().ToLowerInvariant()
+    if ($text -notmatch '^d[d\d\s]*$') { return $null }
+
+    $numbers = New-Object System.Collections.Generic.List[int]
+    $hasNumber = $false
+    foreach ($token in (($text -replace 'd', ' ') -split '\s+')) {
+        if ([string]::IsNullOrWhiteSpace($token)) { continue }
+        $hasNumber = $true
+        $value = 0
+        if ([int]::TryParse($token, [ref]$value) -and $value -gt 0 -and -not $numbers.Contains($value)) {
+            $numbers.Add($value)
+        }
+    }
+
+    return [pscustomobject]@{
+        all     = (-not $hasNumber)
+        numbers = $numbers.ToArray()
+    }
+}
+
 function Update-AgentNotificationHandledEvents {
     param(
-        [AllowNull()][string]$EventId,
+        [AllowNull()][string[]]$EventId,
         [switch]$All,
         [string]$StateRoot
     )
@@ -486,12 +533,17 @@ function Update-AgentNotificationHandledEvents {
         }
         if (-not $hasLock) { throw 'Timed out waiting for the notification event log.' }
 
+        $wanted = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+        foreach ($id in @($EventId)) {
+            if (-not [string]::IsNullOrWhiteSpace($id)) { [void]$wanted.Add($id.Trim()) }
+        }
+
         $output = New-Object System.Collections.Generic.List[string]
         foreach ($line in [IO.File]::ReadAllLines($eventFile, [Text.Encoding]::UTF8)) {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
             try {
                 $event = $line | ConvertFrom-Json
-                if ($All -or "$(Get-AgentNotificationProperty $event 'id')" -eq $EventId) {
+                if ($All -or $wanted.Contains("$(Get-AgentNotificationProperty $event 'id')")) {
                     $matched = $true
                     if (-not (Test-AgentNotificationHandled -Event $event)) {
                         $event | Add-Member -NotePropertyName handled -NotePropertyValue $true -Force
@@ -520,7 +572,7 @@ function Update-AgentNotificationHandledEvents {
 
 function Set-AgentNotificationHandled {
     param(
-        [Parameter(Mandatory = $true)][string]$EventId,
+        [Parameter(Mandatory = $true)][string[]]$EventId,
         [string]$StateRoot
     )
 
@@ -590,6 +642,7 @@ Export-ModuleMember -Function @(
     'ConvertTo-AgentNotificationEvent',
     'Get-AgentNotificationProjectName',
     'Get-AgentNotificationChatName',
+    'Get-AgentNotificationChatKey',
     'Get-AgentNotificationDisplayEvents',
     'Get-AgentNotificationDisplayEntries',
     'Find-AgentNotificationDisplayEvent',
@@ -600,6 +653,7 @@ Export-ModuleMember -Function @(
     'Read-AgentNotificationEvents',
     'Find-AgentNotificationEventById',
     'ConvertFrom-AgentNotificationUri',
+    'ConvertFrom-AgentNotificationDoneCommand',
     'Clear-AgentNotificationEvents',
     'Set-AgentNotificationHandled',
     'Set-AllAgentNotificationsHandled',
