@@ -434,6 +434,21 @@ function Find-AgentNotificationDisplayEvent {
     return $entry[0].event
 }
 
+function Find-AgentNotificationDisplayIndex {
+    param(
+        [object[]]$Events,
+        [AllowNull()][string]$ChatKey,
+        [int]$MaximumCount = 99
+    )
+
+    if ([string]::IsNullOrEmpty($ChatKey)) { return -1 }
+    $entries = @(Get-AgentNotificationDisplayEntries -Events $Events -MaximumCount $MaximumCount)
+    for ($i = 0; $i -lt $entries.Count; $i++) {
+        if ((Get-AgentNotificationChatKey -Event $entries[$i].event) -eq $ChatKey) { return $i }
+    }
+    return -1
+}
+
 function Test-AgentNotificationHandled {
     param([AllowNull()][object]$Event)
 
@@ -747,6 +762,7 @@ Export-ModuleMember -Function @(
     'Get-AgentNotificationDisplayEvents',
     'Get-AgentNotificationDisplayEntries',
     'Find-AgentNotificationDisplayEvent',
+    'Find-AgentNotificationDisplayIndex',
     'Test-AgentNotificationHandled',
     'Format-AgentNotificationDisplayLine',
     'Find-AgentNotificationProjectProfile',

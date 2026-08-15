@@ -170,6 +170,34 @@ function Get-UniqueProjectChoices {
     })
 }
 
+function Get-InitialListSelectionIndex {
+    param(
+        [Parameter(Mandatory = $true)][int]$Count,
+        [ValidateSet('First', 'Middle', 'Last')][string]$Position = 'First'
+    )
+
+    if ($Count -le 0) { return -1 }
+    switch ($Position) {
+        'Middle' { return [int][Math]::Floor(($Count - 1) / 2) }
+        'Last' { return $Count - 1 }
+        default { return 0 }
+    }
+}
+
+function Move-ListSelectionIndex {
+    param(
+        [Parameter(Mandatory = $true)][int]$Index,
+        [Parameter(Mandatory = $true)][int]$Count,
+        [Parameter(Mandatory = $true)][ValidateSet(-1, 1)][int]$Direction
+    )
+
+    if ($Count -le 0) { return -1 }
+    if ($Index -lt 0 -or $Index -ge $Count) {
+        return Get-InitialListSelectionIndex -Count $Count -Position First
+    }
+    return ($Index + $Direction + $Count) % $Count
+}
+
 function Start-ProjectWindow {
     param(
         [Parameter(Mandatory = $true)][string]$ProfileName,
@@ -375,21 +403,86 @@ function Show-ProjectLauncher {
         return
     }
 
+    $selectedProjectIndex = -1
+    $selectedProjectGuid = $null
+    $projectSelectionInitialized = $false
+
     while ($true) {
         $settings = [IO.File]::ReadAllText($settingsFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
         $profiles = $settings.profiles.list
         $allNames = @($profiles | ForEach-Object { $_.name })
         $list     = @($profiles | Where-Object { -not $_.hidden } | Sort-Object -Property name)
 
-        Write-Host ""
-        Write-Host '---==[ Project Launcher ]==---' -ForegroundColor Cyan
-        Write-Host ''
-        for ($i = 0; $i -lt $list.Count; $i++) {
-            "{0,2}. {1}" -f ($i + 1), $list[$i].name
+        if ($list.Count -gt 0) {
+            $matchingIndex = -1
+            if (-not [string]::IsNullOrWhiteSpace("$selectedProjectGuid")) {
+                for ($i = 0; $i -lt $list.Count; $i++) {
+                    if ("$($list[$i].guid)" -eq "$selectedProjectGuid") {
+                        $matchingIndex = $i
+                        break
+                    }
+                }
+            }
+            if ($matchingIndex -ge 0) {
+                $selectedProjectIndex = $matchingIndex
+            } elseif (-not $projectSelectionInitialized) {
+                $selectedProjectIndex = Get-InitialListSelectionIndex -Count $list.Count -Position Middle
+                $projectSelectionInitialized = $true
+            } else {
+                $selectedProjectIndex = [Math]::Max(0, [Math]::Min($selectedProjectIndex, $list.Count - 1))
+            }
+            $selectedProjectGuid = "$($list[$selectedProjectIndex].guid)"
+        } else {
+            $selectedProjectIndex = -1
+            $selectedProjectGuid = $null
         }
-        Write-Host "`n  a = add new   r = remove   q = quit" -ForegroundColor DarkGray
 
-        $answer = Read-Host "`nChoice"
+        $inputBuffer = ''
+        while ($true) {
+            Clear-Host
+            Write-Host '---==[ Project Launcher ]==---' -ForegroundColor Cyan
+            Write-Host 'Up/Down = select   Enter = open   number(s)/a/r/q + Enter = run command' -ForegroundColor DarkGray
+            Write-Host ''
+            if ($list.Count -eq 0) {
+                Write-Host '  No projects available.' -ForegroundColor DarkGray
+            } else {
+                for ($i = 0; $i -lt $list.Count; $i++) {
+                    $line = '{0} {1,2}. {2}' -f $(if ($i -eq $selectedProjectIndex) { '>' } else { ' ' }), ($i + 1), $list[$i].name
+                    if ($i -eq $selectedProjectIndex) {
+                        Write-Host $line -ForegroundColor White -BackgroundColor DarkCyan
+                    } else {
+                        Write-Host $line
+                    }
+                }
+            }
+            Write-Host "`n  a = add new   r = remove   q = quit" -ForegroundColor DarkGray
+            Write-Host "`nSelection: $inputBuffer" -NoNewline -ForegroundColor Green
+
+            $key = [Console]::ReadKey($true)
+            if ($key.Key -eq [ConsoleKey]::UpArrow -or $key.Key -eq [ConsoleKey]::DownArrow) {
+                $direction = if ($key.Key -eq [ConsoleKey]::UpArrow) { -1 } else { 1 }
+                $inputBuffer = ''
+                $selectedProjectIndex = Move-ListSelectionIndex -Index $selectedProjectIndex -Count $list.Count -Direction $direction
+                if ($selectedProjectIndex -ge 0) { $selectedProjectGuid = "$($list[$selectedProjectIndex].guid)" }
+                continue
+            }
+            if ($key.Key -eq [ConsoleKey]::Backspace) {
+                if ($inputBuffer.Length -gt 0) { $inputBuffer = $inputBuffer.Substring(0, $inputBuffer.Length - 1) }
+                continue
+            }
+            if ($key.Key -eq [ConsoleKey]::Enter) {
+                if ([string]::IsNullOrWhiteSpace($inputBuffer)) {
+                    if ($selectedProjectIndex -lt 0) { continue }
+                    $answer = "$($selectedProjectIndex + 1)"
+                } else {
+                    $answer = $inputBuffer
+                }
+                break
+            }
+            if (-not [char]::IsControl($key.KeyChar)) {
+                $inputBuffer += $key.KeyChar
+            }
+        }
 
         if ([string]::IsNullOrWhiteSpace($answer)) { continue }
         if ($answer -eq 'q') { return }
@@ -493,6 +586,8 @@ function Show-ProjectLauncher {
         foreach ($choice in (Get-UniqueProjectChoices -Answer $answer)) {
             if ($choice -match '^\d+$' -and [int]$choice -ge 1 -and [int]$choice -le $list.Count) {
                 $profile = $list[[int]$choice - 1]
+                $selectedProjectIndex = [int]$choice - 1
+                $selectedProjectGuid = "$($profile.guid)"
                 Start-ProjectWindow -ProfileName $profile.name -ProfileGuid "$($profile.guid)" `
                     -ProfilePath $profile.startingDirectory
                 Start-Sleep -Milliseconds 300

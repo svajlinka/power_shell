@@ -12,23 +12,35 @@ if (-not $created) {
 }
 
 function Show-Center {
-    param([object[]]$Events, [hashtable]$ChatNames, [string]$InputBuffer, [string]$Notice)
+    param(
+        [object[]]$Events,
+        [hashtable]$ChatNames,
+        [string]$InputBuffer,
+        [string]$Notice,
+        [int]$SelectedIndex
+    )
 
     Clear-Host
     Write-Host '---==[ Agent Notifications ]==---' -ForegroundColor Cyan
-    Write-Host 'Enter = latest   number/d/d12/d12 d3/c/q + Enter = run command' -ForegroundColor DarkGray
+    Write-Host 'Up/Down = select   Enter = open   number/d/d12/d12 d3/c/q + Enter = run command' -ForegroundColor DarkGray
     Write-Host ''
 
     $displayEntries = @(Get-AgentNotificationDisplayEntries -Events $Events)
     if ($displayEntries.Count -eq 0) {
         Write-Host '  No notifications yet.' -ForegroundColor DarkGray
     } else {
-        foreach ($entry in $displayEntries) {
+        for ($i = 0; $i -lt $displayEntries.Count; $i++) {
+            $entry = $displayEntries[$i]
             $event = $entry.event
             $chatName = Get-CachedAgentNotificationChatName -Event $event -Cache $ChatNames -StateRoot $StateRoot
             $line = Format-AgentNotificationDisplayLine -Event $event -Number $entry.number -ChatName $chatName
             $color = if (Test-AgentNotificationHandled -Event $event) { 'Blue' } else { 'Yellow' }
-            Write-Host $line -ForegroundColor $color
+            $line = $(if ($i -eq $SelectedIndex) { '> ' } else { '  ' }) + $line
+            if ($i -eq $SelectedIndex) {
+                Write-Host $line -ForegroundColor White -BackgroundColor DarkCyan
+            } else {
+                Write-Host $line -ForegroundColor $color
+            }
         }
     }
 
@@ -44,6 +56,9 @@ $inputBuffer = ''
 $notice = ''
 $lastSignature = ''
 $needsRender = $true
+$selectedNotificationIndex = -1
+$selectedChatKey = $null
+$notificationSelectionPinned = $false
 
 try {
     while ($true) {
@@ -63,17 +78,48 @@ try {
 
         if ($signature -ne $lastSignature) {
             $events = @(Read-AgentNotificationEvents -StateRoot $StateRoot)
+            $displayEntries = @(Get-AgentNotificationDisplayEntries -Events $events)
+            if ($displayEntries.Count -eq 0) {
+                $selectedNotificationIndex = -1
+                $selectedChatKey = $null
+                $notificationSelectionPinned = $false
+            } elseif ($notificationSelectionPinned) {
+                $selectedNotificationIndex = Find-AgentNotificationDisplayIndex -Events $events -ChatKey $selectedChatKey
+                if ($selectedNotificationIndex -lt 0) {
+                    $selectedNotificationIndex = Get-InitialListSelectionIndex -Count $displayEntries.Count -Position Last
+                    $notificationSelectionPinned = $false
+                }
+                $selectedChatKey = Get-AgentNotificationChatKey -Event $displayEntries[$selectedNotificationIndex].event
+            } else {
+                $selectedNotificationIndex = Get-InitialListSelectionIndex -Count $displayEntries.Count -Position Last
+                $selectedChatKey = Get-AgentNotificationChatKey -Event $displayEntries[$selectedNotificationIndex].event
+            }
             $lastSignature = $signature
             $needsRender = $true
         }
 
         if ($needsRender) {
-            Show-Center -Events $events -ChatNames $chatNames -InputBuffer $inputBuffer -Notice $notice
+            Show-Center -Events $events -ChatNames $chatNames -InputBuffer $inputBuffer -Notice $notice `
+                -SelectedIndex $selectedNotificationIndex
             $needsRender = $false
         }
 
         if ([Console]::KeyAvailable) {
             $key = [Console]::ReadKey($true)
+            if ($key.Key -eq [ConsoleKey]::UpArrow -or $key.Key -eq [ConsoleKey]::DownArrow) {
+                $displayEntries = @(Get-AgentNotificationDisplayEntries -Events $events)
+                $direction = if ($key.Key -eq [ConsoleKey]::UpArrow) { -1 } else { 1 }
+                $selectedNotificationIndex = Move-ListSelectionIndex -Index $selectedNotificationIndex `
+                    -Count $displayEntries.Count -Direction $direction
+                if ($selectedNotificationIndex -ge 0) {
+                    $selectedChatKey = Get-AgentNotificationChatKey -Event $displayEntries[$selectedNotificationIndex].event
+                    $notificationSelectionPinned = $true
+                }
+                $inputBuffer = ''
+                $notice = ''
+                $needsRender = $true
+                continue
+            }
             if ($key.Key -eq [ConsoleKey]::Backspace) {
                 if ($inputBuffer.Length -gt 0) {
                     $inputBuffer = $inputBuffer.Substring(0, $inputBuffer.Length - 1)
@@ -117,6 +163,9 @@ try {
                     Clear-AgentNotificationEvents -StateRoot $StateRoot
                     $events = @()
                     $chatNames.Clear()
+                    $selectedNotificationIndex = -1
+                    $selectedChatKey = $null
+                    $notificationSelectionPinned = $false
                     $inputBuffer = ''
                     $notice = ''
                     $lastSignature = ''
@@ -126,8 +175,10 @@ try {
                 $selection = 0
                 $event = $null
                 if ([string]::IsNullOrEmpty($inputBuffer)) {
-                    $selection = 1
-                    $event = Find-AgentNotificationDisplayEvent -Events $events -Number $selection
+                    $displayEntries = @(Get-AgentNotificationDisplayEntries -Events $events)
+                    if ($selectedNotificationIndex -ge 0 -and $selectedNotificationIndex -lt $displayEntries.Count) {
+                        $event = $displayEntries[$selectedNotificationIndex].event
+                    }
                 } elseif ([int]::TryParse($inputBuffer, [ref]$selection)) {
                     $event = Find-AgentNotificationDisplayEvent -Events $events -Number $selection
                 }

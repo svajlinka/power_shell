@@ -190,6 +190,9 @@ try {
     Assert-Equal $displayEntries[0].number 99 'Top notification did not receive the oldest visible number'
     Assert-Equal $displayEntries[98].number 1 'Latest notification at the bottom was not numbered 1'
     Assert-Equal (Find-AgentNotificationDisplayEvent -Events $manyEvents -Number 1).id 'event-120' 'Selection 1 did not resolve to the latest notification'
+    $latestChatKey = Get-AgentNotificationChatKey -Event $displayEntries[98].event
+    Assert-Equal (Find-AgentNotificationDisplayIndex -Events $manyEvents -ChatKey $latestChatKey) 98 'Latest notification chat key did not resolve to its display index'
+    Assert-Equal (Find-AgentNotificationDisplayIndex -Events $manyEvents -ChatKey 'missing') -1 'Unknown notification chat key resolved to a display index'
 
     $chatEvents = @(
         [pscustomobject]@{ id = 'a1'; source = 'Codex'; sessionId = 'session-a' },
@@ -286,13 +289,17 @@ try {
     Assert-True ($centerSource -notmatch '\$notice = "(?:Focused|Reopened)') 'Successful chat actions still emit status notices'
     Assert-True ($centerSource -match "---==\[ Agent Notifications \]==---") 'Notification pane is missing its cyan banner title'
     Assert-True ($centerSource -match 'Set-AllAgentNotificationsHandled') 'Notification pane is missing the done-all shortcut'
-    Assert-True ($centerSource -match 'IsNullOrEmpty\(\$inputBuffer\)[\s\S]+?\$selection = 1') 'Blank Enter does not default to the latest notification'
-    Assert-True ($centerSource -match 'Enter = latest') 'Notification help does not advertise the blank-Enter shortcut'
+    Assert-True ($centerSource -match '\[ConsoleKey\]::UpArrow' -and $centerSource -match '\[ConsoleKey\]::DownArrow') 'Notification pane is missing arrow-key navigation'
+    Assert-True ($centerSource -match 'Move-ListSelectionIndex') 'Notification pane does not wrap arrow-key selection through the shared helper'
+    Assert-True ($centerSource -match 'Position Last') 'Notification selection does not initially target the latest row'
+    Assert-True ($centerSource -match 'Up/Down = select') 'Notification help does not advertise arrow-key selection'
+    Assert-True ($centerSource -match 'UpArrow[\s\S]+?DownArrow[\s\S]+?\$inputBuffer = ''''') 'Notification arrow navigation does not clear typed input'
+    Assert-True ($centerSource -match 'IsNullOrEmpty\(\$inputBuffer\)[\s\S]+?\$displayEntries\[\$selectedNotificationIndex\]\.event') 'Blank notification Enter does not open the highlighted row'
     Assert-True ($centerSource -match 'Get-AgentNotificationDisplayEntries[\s\S]+?Format-AgentNotificationDisplayLine -Event \$event -Number \$entry\.number') `
         'Notification center does not render one collapsed row per chat'
     Assert-True ($centerSource -match 'Read-AgentNotificationChatNameCache') 'Notification center does not preload persisted chat names'
     Assert-True ($centerSource -match 'Get-CachedAgentNotificationChatName') 'Notification center does not reuse cached chat names'
-    Assert-True ($centerSource -notmatch '\$key\.Key -eq \[ConsoleKey\]::[DCQ]') 'A letter command still executes before Enter'
+    Assert-True ($centerSource -notmatch '\$key\.Key -eq \[ConsoleKey\]::[DCQ](?:\b|\W)') 'A letter command still executes before Enter'
     Assert-True ($centerSource -match 'ConvertFrom-AgentNotificationDoneCommand[\s\S]+?\$done\.all[\s\S]+?Set-AllAgentNotificationsHandled') 'Done-all is not dispatched by Enter'
     Assert-True ($centerSource -match 'Find-AgentNotificationDisplayEvent -Events \$events -Number \$number[\s\S]+?Set-AgentNotificationHandled -EventId') 'Numbered done commands do not mark their own notifications handled'
     Assert-True ($centerSource -match '\$typed -eq ''d'' -and') 'Typing d before a notification number is not accepted'
@@ -301,6 +308,11 @@ try {
     Assert-True ($centerSource -match '\$command -eq ''q''\) \{ break \}') 'Close is not dispatched by Enter'
     $profileSource = Get-Content -Raw -LiteralPath $profilePath
     Assert-True ($profileSource -match "---==\[ Project Launcher \]==---") 'Project launcher is missing its matching cyan banner title'
+    Assert-True ($profileSource -match 'Position Middle') 'Project launcher does not initially select its middle row'
+    Assert-True ($profileSource -match '\[ConsoleKey\]::UpArrow' -and $profileSource -match '\[ConsoleKey\]::DownArrow') 'Project launcher is missing arrow-key navigation'
+    Assert-True ($profileSource -match 'Up/Down = select') 'Project launcher help does not advertise arrow-key selection'
+    Assert-True ($profileSource -match 'UpArrow[\s\S]+?DownArrow[\s\S]+?\$inputBuffer = ''''') 'Project arrow navigation does not clear typed input'
+    Assert-True ($profileSource -match 'IsNullOrWhiteSpace\(\$inputBuffer\)[\s\S]+?\$answer = "\$\(\$selectedProjectIndex \+ 1\)"') 'Blank project Enter does not open the highlighted row'
     Assert-True ([regex]::Matches($profileSource, '\[IO\.File\]::ReadAllText\(\$settingsFile, \[Text\.Encoding\]::UTF8\)').Count -eq 2) `
         'Windows Terminal settings are not read as UTF-8 in both launcher and chat-reopen paths'
     Assert-True ($centerSource -match 'Open-AgentNotificationChat') 'Notification center does not use shared chat routing'
@@ -355,6 +367,13 @@ try {
     $otherWindow = Get-ProjectWindowName -ProfileGuid '{2A5FF801-DEAD-BEEF-8123-0123456789AB}'
     Assert-True ($otherWindow -ne $projectWindow) 'Different project profiles received the same window name'
     Assert-Equal ((Get-UniqueProjectChoices -Answer '3 1,3 2 1') -join ',') '3,1,2' 'Repeated project choices were not deduplicated in input order'
+    Assert-Equal (Get-InitialListSelectionIndex -Count 0 -Position Middle) -1 'Empty lists received a selectable row'
+    Assert-Equal (Get-InitialListSelectionIndex -Count 9 -Position Middle) 4 'Odd project list did not select its middle row'
+    Assert-Equal (Get-InitialListSelectionIndex -Count 10 -Position Middle) 4 'Even project list did not select its upper-middle row'
+    Assert-Equal (Get-InitialListSelectionIndex -Count 10 -Position Last) 9 'Latest-row selection did not target the final display index'
+    Assert-Equal (Move-ListSelectionIndex -Index 0 -Count 4 -Direction -1) 3 'Up did not wrap from the first row to the last'
+    Assert-Equal (Move-ListSelectionIndex -Index 3 -Count 4 -Direction 1) 0 'Down did not wrap from the last row to the first'
+    Assert-Equal (Move-ListSelectionIndex -Index -1 -Count 4 -Direction 1) 0 'Invalid selection did not recover at the first row'
     Assert-Equal (Get-ProjectDisplayName -ProfilePath 'C:\dev\power_shell' -FallbackName 'fallback') 'power_shell' 'Project title was not derived from its directory'
     Assert-Equal (Get-ProjectDisplayName -ProfilePath 'C:\dev\project with spaces\' -FallbackName 'fallback') 'project with spaces' 'Project title did not handle spaces or a trailing separator'
     Assert-Equal (Get-ProjectDisplayName -ProfilePath 'C:\' -FallbackName 'Fallback Project') 'Fallback Project' 'Project title did not fall back for a root path'
