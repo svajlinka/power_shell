@@ -38,7 +38,7 @@ On the first launcher-created Codex session, run `/hooks` and trust the `PreTool
 - Close either Projects or Notifications independently; the next `p` restores only the missing window and reuses the other one.
 - Run `Test-AgentNotification input`, `Test-AgentNotification approval`, or `Test-AgentNotification finished` to send a test event.
 
-Events are stored in `%LOCALAPPDATA%\AgentNotifications\events.jsonl`. Only short previews and launcher routing metadata are retained; raw hook payloads and transcripts are not stored.
+Events are stored in `%LOCALAPPDATA%\AgentNotifications\events.jsonl`. Resolved short chat names are cached in `chat-names.jsonl` in the same folder so notification refreshes and later window launches do not repeatedly scan chat histories. The first launch after upgrading may take longer once while this cache is populated. The `c` command clears both files. Raw hook payloads and transcripts are not stored.
 
 To remove the launcher-specific Codex and Claude configuration and the owned `agentnotify://` URL handler:
 

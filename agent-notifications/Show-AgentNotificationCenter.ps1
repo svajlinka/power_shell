@@ -12,7 +12,7 @@ if (-not $created) {
 }
 
 function Show-Center {
-    param([object[]]$Events, [string]$InputBuffer, [string]$Notice)
+    param([object[]]$Events, [hashtable]$ChatNames, [string]$InputBuffer, [string]$Notice)
 
     Clear-Host
     Write-Host '---==[ Agent Notifications ]==---' -ForegroundColor Cyan
@@ -25,7 +25,8 @@ function Show-Center {
     } else {
         foreach ($entry in $displayEntries) {
             $event = $entry.event
-            $line = Format-AgentNotificationDisplayLine -Event $event -Number $entry.number
+            $chatName = Get-CachedAgentNotificationChatName -Event $event -Cache $ChatNames -StateRoot $StateRoot
+            $line = Format-AgentNotificationDisplayLine -Event $event -Number $entry.number -ChatName $chatName
             $color = if (Test-AgentNotificationHandled -Event $event) { 'Blue' } else { 'Yellow' }
             Write-Host $line -ForegroundColor $color
         }
@@ -38,6 +39,7 @@ function Show-Center {
 }
 
 $events = @()
+$chatNames = Read-AgentNotificationChatNameCache -StateRoot $StateRoot
 $inputBuffer = ''
 $notice = ''
 $lastSignature = ''
@@ -66,7 +68,7 @@ try {
         }
 
         if ($needsRender) {
-            Show-Center -Events $events -InputBuffer $inputBuffer -Notice $notice
+            Show-Center -Events $events -ChatNames $chatNames -InputBuffer $inputBuffer -Notice $notice
             $needsRender = $false
         }
 
@@ -114,6 +116,7 @@ try {
                 if ($command -eq 'c') {
                     Clear-AgentNotificationEvents -StateRoot $StateRoot
                     $events = @()
+                    $chatNames.Clear()
                     $inputBuffer = ''
                     $notice = ''
                     $lastSignature = ''

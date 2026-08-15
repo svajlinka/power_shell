@@ -294,6 +294,102 @@ function Get-AgentNotificationChatKey {
     return "event`0$([guid]::NewGuid().ToString('N'))"
 }
 
+function Read-AgentNotificationChatNameCache {
+    param([string]$StateRoot)
+
+    $cache = @{}
+    $cacheFile = Join-Path (Get-AgentNotificationStateRoot -StateRoot $StateRoot) 'chat-names.jsonl'
+    if (-not (Test-Path -LiteralPath $cacheFile)) { return $cache }
+
+    foreach ($line in (Get-Content -LiteralPath $cacheFile -ErrorAction SilentlyContinue)) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        try {
+            $record = $line | ConvertFrom-Json
+            $key = "$(Get-AgentNotificationProperty -InputObject $record -Name 'key')"
+            $name = "$(Get-AgentNotificationProperty -InputObject $record -Name 'name')"
+            if (-not [string]::IsNullOrWhiteSpace($key) -and -not [string]::IsNullOrWhiteSpace($name)) {
+                $cache[$key] = ConvertTo-AgentNotificationPreview -Value $name -MaximumLength 60
+            }
+        } catch { }
+    }
+    return $cache
+}
+
+function Set-AgentNotificationChatNameCacheEntry {
+    param(
+        [Parameter(Mandatory = $true)][string]$Key,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [string]$StateRoot
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Key) -or [string]::IsNullOrWhiteSpace($Name)) { return }
+    $root = Get-AgentNotificationStateRoot -StateRoot $StateRoot
+    [void](New-Item -ItemType Directory -Path $root -Force)
+    $cacheFile = Join-Path $root 'chat-names.jsonl'
+    $mutex = New-Object System.Threading.Mutex($false, 'Local\AgentNotifications.ChatNameCache')
+    $hasLock = $false
+    try {
+        try {
+            $hasLock = $mutex.WaitOne(5000)
+        } catch [System.Threading.AbandonedMutexException] {
+            $hasLock = $true
+        }
+        if (-not $hasLock) { throw 'Timed out waiting for the notification chat-name cache.' }
+        $record = [pscustomobject][ordered]@{
+            key  = $Key
+            name = ConvertTo-AgentNotificationPreview -Value $Name -MaximumLength 60
+        }
+        Add-Content -LiteralPath $cacheFile -Value ($record | ConvertTo-Json -Compress) -Encoding UTF8
+    } finally {
+        if ($hasLock) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
+    }
+}
+
+function Get-CachedAgentNotificationChatName {
+    param(
+        [Parameter(Mandatory = $true)][object]$Event,
+        [Parameter(Mandatory = $true)][hashtable]$Cache,
+        [string]$StateRoot,
+        [string]$CodexSessionIndexPath,
+        [string]$CodexHistoryPath,
+        [string]$CodexSessionsPath,
+        [string]$ClaudeHistoryPath
+    )
+
+    $key = Get-AgentNotificationChatKey -Event $Event
+    if ($Cache.ContainsKey($key)) { return $Cache[$key] }
+
+    $name = Get-AgentNotificationChatName -Event $Event -CodexSessionIndexPath $CodexSessionIndexPath `
+        -CodexHistoryPath $CodexHistoryPath -CodexSessionsPath $CodexSessionsPath `
+        -ClaudeHistoryPath $ClaudeHistoryPath
+    $Cache[$key] = $name
+    Set-AgentNotificationChatNameCacheEntry -Key $key -Name $name -StateRoot $StateRoot
+    return $name
+}
+
+function Clear-AgentNotificationChatNameCache {
+    param([string]$StateRoot)
+
+    $root = Get-AgentNotificationStateRoot -StateRoot $StateRoot
+    [void](New-Item -ItemType Directory -Path $root -Force)
+    $cacheFile = Join-Path $root 'chat-names.jsonl'
+    $mutex = New-Object System.Threading.Mutex($false, 'Local\AgentNotifications.ChatNameCache')
+    $hasLock = $false
+    try {
+        try {
+            $hasLock = $mutex.WaitOne(5000)
+        } catch [System.Threading.AbandonedMutexException] {
+            $hasLock = $true
+        }
+        if (-not $hasLock) { throw 'Timed out waiting for the notification chat-name cache.' }
+        Set-Content -LiteralPath $cacheFile -Value $null -Encoding UTF8
+    } finally {
+        if ($hasLock) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
+    }
+}
+
 function Get-AgentNotificationDisplayEvents {
     param([object[]]$Events, [int]$MaximumCount = 99)
 
@@ -483,6 +579,7 @@ function Clear-AgentNotificationEvents {
         if ($hasLock) { $mutex.ReleaseMutex() }
         $mutex.Dispose()
     }
+    Clear-AgentNotificationChatNameCache -StateRoot $StateRoot
 }
 
 function ConvertFrom-AgentNotificationDoneCommand {
@@ -643,6 +740,10 @@ Export-ModuleMember -Function @(
     'Get-AgentNotificationProjectName',
     'Get-AgentNotificationChatName',
     'Get-AgentNotificationChatKey',
+    'Read-AgentNotificationChatNameCache',
+    'Set-AgentNotificationChatNameCacheEntry',
+    'Get-CachedAgentNotificationChatName',
+    'Clear-AgentNotificationChatNameCache',
     'Get-AgentNotificationDisplayEvents',
     'Get-AgentNotificationDisplayEntries',
     'Find-AgentNotificationDisplayEvent',

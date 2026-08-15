@@ -122,6 +122,34 @@ try {
         -CodexHistoryPath $codexHistory -CodexSessionsPath $codexSessions -ClaudeHistoryPath $claudeHistory) `
         'tell me about this project like 10 bullets' 'Codex chat did not prefer the first rollout prompt over a later global-history prompt'
 
+    $chatNameCache = @{}
+    $cachedApprovalName = Get-CachedAgentNotificationChatName -Event $approval -Cache $chatNameCache `
+        -StateRoot $stateRoot -CodexSessionIndexPath $codexIndex -CodexHistoryPath $codexHistory `
+        -CodexSessionsPath $codexSessions -ClaudeHistoryPath $claudeHistory
+    Assert-Equal $cachedApprovalName 'Earlier name' 'Chat-name cache did not return the resolved name'
+    Assert-Equal $chatNameCache.Count 1 'Chat-name cache did not retain the resolved chat'
+    $chatNameCacheFile = Join-Path $stateRoot 'chat-names.jsonl'
+    Assert-True (Test-Path -LiteralPath $chatNameCacheFile) 'Chat-name cache was not persisted'
+    Add-Content -LiteralPath $chatNameCacheFile -Value '{not valid json}' -Encoding UTF8
+    $reloadedChatNames = Read-AgentNotificationChatNameCache -StateRoot $stateRoot
+    Assert-Equal $reloadedChatNames[(Get-AgentNotificationChatKey -Event $approval)] 'Earlier name' 'Persisted chat name was not restored'
+    $cacheLinesBeforeHit = @(Get-Content -LiteralPath $chatNameCacheFile).Count
+    $cachedWithoutSources = Get-CachedAgentNotificationChatName -Event $approval -Cache $reloadedChatNames `
+        -StateRoot $stateRoot -CodexSessionIndexPath (Join-Path $testRoot 'missing-index.jsonl') `
+        -CodexHistoryPath (Join-Path $testRoot 'missing-history.jsonl') `
+        -CodexSessionsPath (Join-Path $testRoot 'missing-sessions') `
+        -ClaudeHistoryPath (Join-Path $testRoot 'missing-claude-history.jsonl')
+    Assert-Equal $cachedWithoutSources 'Earlier name' 'Persisted cache hit unnecessarily resolved the chat name again'
+    Assert-Equal @(Get-Content -LiteralPath $chatNameCacheFile).Count $cacheLinesBeforeHit 'Cache hit appended a duplicate record'
+    $cachedHistoryName = Get-CachedAgentNotificationChatName -Event $historyEvent -Cache $reloadedChatNames `
+        -StateRoot $stateRoot -CodexSessionIndexPath (Join-Path $testRoot 'missing-index.jsonl') `
+        -CodexHistoryPath $codexHistory -CodexSessionsPath $codexSessions -ClaudeHistoryPath $claudeHistory
+    Assert-Equal $cachedHistoryName (Get-AgentNotificationChatName -Event $historyEvent `
+        -CodexSessionIndexPath (Join-Path $testRoot 'missing-index.jsonl') `
+        -CodexHistoryPath $codexHistory -CodexSessionsPath $codexSessions -ClaudeHistoryPath $claudeHistory) `
+        'A cache miss did not resolve the new chat'
+    Assert-Equal $reloadedChatNames.Count 2 'A cache miss did not add exactly one new chat'
+
     $profiles = @(
         [pscustomobject]@{ name = 'sample-project'; guid = '{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}'; startingDirectory = 'C:\dev\sample-project' },
         [pscustomobject]@{ name = 'renamed-project'; guid = $metadata.ProfileGuid; startingDirectory = 'C:\dev\renamed-project' }
@@ -262,6 +290,8 @@ try {
     Assert-True ($centerSource -match 'Enter = latest') 'Notification help does not advertise the blank-Enter shortcut'
     Assert-True ($centerSource -match 'Get-AgentNotificationDisplayEntries[\s\S]+?Format-AgentNotificationDisplayLine -Event \$event -Number \$entry\.number') `
         'Notification center does not render one collapsed row per chat'
+    Assert-True ($centerSource -match 'Read-AgentNotificationChatNameCache') 'Notification center does not preload persisted chat names'
+    Assert-True ($centerSource -match 'Get-CachedAgentNotificationChatName') 'Notification center does not reuse cached chat names'
     Assert-True ($centerSource -notmatch '\$key\.Key -eq \[ConsoleKey\]::[DCQ]') 'A letter command still executes before Enter'
     Assert-True ($centerSource -match 'ConvertFrom-AgentNotificationDoneCommand[\s\S]+?\$done\.all[\s\S]+?Set-AllAgentNotificationsHandled') 'Done-all is not dispatched by Enter'
     Assert-True ($centerSource -match 'Find-AgentNotificationDisplayEvent -Events \$events -Number \$number[\s\S]+?Set-AgentNotificationHandled -EventId') 'Numbered done commands do not mark their own notifications handled'
@@ -281,6 +311,7 @@ try {
 
     Clear-AgentNotificationEvents -StateRoot $stateRoot
     Assert-Equal @(Read-AgentNotificationEvents -StateRoot $stateRoot).Count 0 'Clear did not empty notification history'
+    Assert-Equal (Read-AgentNotificationChatNameCache -StateRoot $stateRoot).Count 0 'Clear did not empty the chat-name cache'
 
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerPath -CodexHome $codexHome -StateRoot $stateRoot -SkipProtocolRegistration | Out-Null
     $codexProfile = Join-Path $codexHome 'agent-notifications.config.toml'
