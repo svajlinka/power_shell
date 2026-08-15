@@ -1,5 +1,7 @@
 $script:PowerShellToolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $script:AgentNotificationsRoot = Join-Path $script:PowerShellToolsRoot 'agent-notifications'
+$script:AgentProjectLauncherWindow = 'agent-project-launcher'
+$script:AgentNotificationCenterWindow = 'agent-notification-center'
 
 function Get-AgentNotificationConfiguration {
     [pscustomobject]@{
@@ -53,23 +55,28 @@ function Get-AgentControlCenterArguments {
     $launcherCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $launcherEncoded"
     $centerCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $centerEncoded"
 
-    if ($LauncherRunning -and $NotificationsRunning) {
-        return '-w agent-control-center focus-tab -t 0'
+    $notificationArguments = if ($NotificationsRunning) {
+        "-w $script:AgentNotificationCenterWindow focus-tab -t 0"
+    } else {
+        "-w $script:AgentNotificationCenterWindow new-tab --title Notifications $centerCommand"
     }
-    if ($LauncherRunning) {
-        return "-w agent-control-center focus-tab -t 0 ; sp -V -s 0.5 --title Notifications $centerCommand ; mf first"
+    $launcherArguments = if ($LauncherRunning) {
+        "-w $script:AgentProjectLauncherWindow focus-tab -t 0"
+    } else {
+        "-w $script:AgentProjectLauncherWindow new-tab --title Projects $launcherCommand"
     }
-    if ($NotificationsRunning) {
-        return "-w agent-control-center focus-tab -t 0 ; sp -V -s 0.5 --title Projects $launcherCommand ; swap-pane left ; mf first"
-    }
-    return "-w agent-control-center new-tab --title Projects $launcherCommand ; sp -V -s 0.5 --title Notifications $centerCommand ; mf first"
+
+    # Open or focus notifications first so the interactive project launcher ends up in front.
+    return @($notificationArguments, $launcherArguments)
 }
 
 function Start-AgentControlCenter {
     $launcherRunning = Test-NamedMutexExists -Name 'Local\AgentNotifications.ProjectLauncher'
     $notificationsRunning = Test-NamedMutexExists -Name 'Local\AgentNotifications.ControlCenter.Notifications'
-    $terminalArguments = Get-AgentControlCenterArguments -LauncherRunning $launcherRunning -NotificationsRunning $notificationsRunning
-    Start-Process wt.exe -ArgumentList $terminalArguments
+    $terminalArgumentSets = @(Get-AgentControlCenterArguments -LauncherRunning $launcherRunning -NotificationsRunning $notificationsRunning)
+    foreach ($terminalArguments in $terminalArgumentSets) {
+        Start-Process wt.exe -ArgumentList $terminalArguments
+    }
     return $true
 }
 
@@ -323,7 +330,7 @@ function Test-AgentNotification {
         $env:AI_NOTIFY_PANE = '0'
         $env:AI_NOTIFY_PROJECT = 'Notification smoke test'
         $env:AI_NOTIFY_PROFILE_GUID = ''
-        $env:AI_NOTIFY_WINDOW = 'agent-control-center'
+        $env:AI_NOTIFY_WINDOW = $script:AgentNotificationCenterWindow
         $env:AI_NOTIFY_GUARD = 'Local\AgentNotifications.ControlCenter.Notifications'
         $payload = switch ($Type) {
             'input' {

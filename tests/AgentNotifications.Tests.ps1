@@ -302,16 +302,20 @@ try {
     Assert-True ($installerSource -match 'registeredOwner -eq \$protocolOwner') 'Uninstall does not protect unowned protocol registrations'
 
     $freshControl = Get-AgentControlCenterArguments -LauncherRunning $false -NotificationsRunning $false
-    Assert-True ($freshControl -match 'new-tab --title Projects') 'Fresh control center does not create the launcher pane first'
-    Assert-True ($freshControl -match 'sp -V -s 0\.5 --title Notifications') 'Fresh control center does not create an equal notification split'
+    Assert-Equal @($freshControl).Count 2 'Fresh control center does not create two windows'
+    Assert-True ($freshControl[0] -match '^-w agent-notification-center new-tab --title Notifications') 'Fresh control center does not create the notification window first'
+    Assert-True ($freshControl[1] -match '^-w agent-project-launcher new-tab --title Projects') 'Fresh control center does not create the project window last'
+    Assert-True (($freshControl -join ' ') -notmatch '\bsp\b|split-pane|swap-pane') 'Fresh control center still contains pane-splitting commands'
     $existingControl = Get-AgentControlCenterArguments -LauncherRunning $true -NotificationsRunning $true
-    Assert-Equal $existingControl '-w agent-control-center focus-tab -t 0' 'Existing control center is not focused without adding panes'
+    Assert-Equal @($existingControl).Count 2 'Existing control center does not focus both windows'
+    Assert-Equal $existingControl[0] '-w agent-notification-center focus-tab -t 0' 'Existing notification window is not focused first'
+    Assert-Equal $existingControl[1] '-w agent-project-launcher focus-tab -t 0' 'Existing project window is not focused last'
     $missingNotifications = Get-AgentControlCenterArguments -LauncherRunning $true -NotificationsRunning $false
-    Assert-True ($missingNotifications -match '--title Notifications') 'Missing notification pane is not restored'
-    Assert-True ($missingNotifications -notmatch '--title Projects') 'Restoring notifications also creates a launcher pane'
+    Assert-True ($missingNotifications[0] -match 'agent-notification-center new-tab --title Notifications') 'Missing notification window is not restored'
+    Assert-Equal $missingNotifications[1] '-w agent-project-launcher focus-tab -t 0' 'Restoring notifications does not reuse the project window'
     $missingLauncher = Get-AgentControlCenterArguments -LauncherRunning $false -NotificationsRunning $true
-    Assert-True ($missingLauncher -match '--title Projects') 'Missing launcher pane is not restored'
-    Assert-True ($missingLauncher -match 'swap-pane left') 'Restored launcher pane is not moved to the left column'
+    Assert-Equal $missingLauncher[0] '-w agent-notification-center focus-tab -t 0' 'Restoring the launcher does not reuse the notification window'
+    Assert-True ($missingLauncher[1] -match 'agent-project-launcher new-tab --title Projects') 'Missing project window is not restored'
 
     $projectGuid = '{1A5FF801-DEAD-BEEF-8123-0123456789AB}'
     $projectWindow = Get-ProjectWindowName -ProfileGuid $projectGuid

@@ -1,6 +1,6 @@
 # Agent Notifications
 
-The `p` command opens or focuses one Agent Control Center window. Its left pane contains the project launcher and its right pane contains the notification inbox. Notifications are enabled only for Codex and Claude panes created by that launcher.
+The `p` command opens or focuses two independent Windows Terminal windows: the project launcher and the notification inbox. Notifications are enabled only for Codex and Claude panes created by that launcher.
 
 ## First use
 
@@ -14,10 +14,10 @@ On the first launcher-created Codex session, run `/hooks` and trust the `PreTool
 
 ## Control center
 
-- Repeated `p` calls focus the existing control center instead of opening duplicates.
-- Enter a project number in the left pane to launch its four-agent project window.
+- Repeated `p` calls focus both existing windows instead of opening duplicates, with the Projects window focused last and ready for input.
+- Enter a project number in the Projects window to launch its four-agent project window.
 - Selecting an already-open project focuses its existing window instead of launching another one.
-- Enter an event number in the right pane to focus its original chat.
+- Enter an event number in the Notifications window to focus its original chat.
 - Press Enter with an empty selection to open notification `1`, the latest chat.
 - Each chat occupies a single row that always shows its latest event. A new notification for the same chat replaces that chat's previous row instead of adding another one.
 - Up to 99 chats are shown oldest-to-newest from top to bottom, with the most recently active chat numbered `1` at the bottom.
@@ -34,8 +34,8 @@ On the first launcher-created Codex session, run `/hooks` and trust the `PreTool
 - Type `d` followed by an event number, such as `d12`, to mark only that notification handled. Several numbers can be combined as `d10 d12 d11` or `d10 12 11`; unknown numbers are reported and the valid ones are still marked.
 - Typing or correcting a selection updates only the input prompt; the notification list is not redrawn until Enter is pressed or its data changes.
 - Type `c` and press Enter to clear the notification history.
-- Type `q` and press Enter in the notification pane to close it; the next `p` restores it.
-- Close the Agent Control Center window normally to close both panes together.
+- Type `q` and press Enter in the Notifications window to close it; the next `p` restores it.
+- Close either Projects or Notifications independently; the next `p` restores only the missing window and reuses the other one.
 - Run `Test-AgentNotification input`, `Test-AgentNotification approval`, or `Test-AgentNotification finished` to send a test event.
 
 Events are stored in `%LOCALAPPDATA%\AgentNotifications\events.jsonl`. Only short previews and launcher routing metadata are retained; raw hook payloads and transcripts are not stored.
