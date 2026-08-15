@@ -56,14 +56,14 @@ function Get-AgentControlCenterArguments {
     $centerCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $centerEncoded"
 
     $notificationArguments = if ($NotificationsRunning) {
-        "-w $script:AgentNotificationCenterWindow focus-tab -t 0"
+        "-M -w $script:AgentNotificationCenterWindow focus-tab -t 0"
     } else {
-        "-w $script:AgentNotificationCenterWindow new-tab --title Notifications $centerCommand"
+        "-M -w $script:AgentNotificationCenterWindow new-tab --title Notifications $centerCommand"
     }
     $launcherArguments = if ($LauncherRunning) {
-        "-w $script:AgentProjectLauncherWindow focus-tab -t 0"
+        "-M -w $script:AgentProjectLauncherWindow focus-tab -t 0"
     } else {
-        "-w $script:AgentProjectLauncherWindow new-tab --title Projects $launcherCommand"
+        "-M -w $script:AgentProjectLauncherWindow new-tab --title Projects $launcherCommand"
     }
 
     # Open or focus notifications first so the interactive project launcher ends up in front.
@@ -140,7 +140,7 @@ function Get-AgentPaneFocusArguments {
     )
 
     if ($Pane -lt 1) { throw 'Pane number must be at least 1.' }
-    $parts = @("-w $Window focus-tab -t 0", 'move-focus first')
+    $parts = @("-M -w $Window focus-tab -t 0", 'move-focus first')
     for ($i = 1; $i -lt $Pane; $i++) { $parts += 'move-focus nextInOrder' }
     return ($parts -join ' ; ')
 }
@@ -229,7 +229,7 @@ function Start-ProjectWindow {
             }
             Start-Process wt.exe -ArgumentList (Get-AgentPaneFocusArguments -Window $windowName -Pane $ResumePane)
         } else {
-            Start-Process wt.exe -ArgumentList "-w $windowName focus-tab -t 0"
+            Start-Process wt.exe -ArgumentList "-M -w $windowName focus-tab -t 0"
         }
         return
     }
@@ -275,7 +275,7 @@ function Start-ProjectWindow {
         $shell = "powershell.exe -NoExit -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
 
         if ($i -eq 0) {
-            $parts += "-w $windowName new-tab --title $quotedTitle -p $q $shell"
+            $parts += "-M -w $windowName new-tab --title $quotedTitle -p $q $shell"
             continue
         }
 
@@ -311,7 +311,7 @@ function Open-AgentNotificationChat {
             if ($hasExactChat) {
                 Start-Process wt.exe -ArgumentList (Get-AgentPaneFocusArguments -Window $Event.window -Pane $pane)
             } else {
-                Start-Process wt.exe -ArgumentList @('-w', $Event.window, 'focus-tab', '-t', '0')
+                Start-Process wt.exe -ArgumentList @('-M', '-w', $Event.window, 'focus-tab', '-t', '0')
             }
         } else {
             $windowGuard = 'Local\AgentNotifications.Project.' + $Event.window

@@ -190,10 +190,6 @@ try {
     Assert-Equal $displayEntries[0].number 99 'Top notification did not receive the oldest visible number'
     Assert-Equal $displayEntries[98].number 1 'Latest notification at the bottom was not numbered 1'
     Assert-Equal (Find-AgentNotificationDisplayEvent -Events $manyEvents -Number 1).id 'event-120' 'Selection 1 did not resolve to the latest notification'
-    $latestChatKey = Get-AgentNotificationChatKey -Event $displayEntries[98].event
-    Assert-Equal (Find-AgentNotificationDisplayIndex -Events $manyEvents -ChatKey $latestChatKey) 98 'Latest notification chat key did not resolve to its display index'
-    Assert-Equal (Find-AgentNotificationDisplayIndex -Events $manyEvents -ChatKey 'missing') -1 'Unknown notification chat key resolved to a display index'
-
     $chatEvents = @(
         [pscustomobject]@{ id = 'a1'; source = 'Codex'; sessionId = 'session-a' },
         [pscustomobject]@{ id = 'b1'; source = 'Claude'; sessionId = 'session-b' },
@@ -289,17 +285,10 @@ try {
     Assert-True ($centerSource -notmatch '\$notice = "(?:Focused|Reopened)') 'Successful chat actions still emit status notices'
     Assert-True ($centerSource -match "---==\[ Agent Notifications \]==---") 'Notification pane is missing its cyan banner title'
     Assert-True ($centerSource -match 'Set-AllAgentNotificationsHandled') 'Notification pane is missing the done-all shortcut'
-    Assert-True ($centerSource -match '\[ConsoleKey\]::UpArrow' -and $centerSource -match '\[ConsoleKey\]::DownArrow') 'Notification pane is missing arrow-key navigation'
-    Assert-True ($centerSource -match 'Move-ListSelectionIndex') 'Notification pane does not wrap arrow-key selection through the shared helper'
-    Assert-True ($centerSource -match 'Position Last') 'Notification selection does not initially target the latest row'
-    Assert-True ($centerSource -match 'Up/Down = select') 'Notification help does not advertise arrow-key selection'
-    Assert-True ($centerSource -match 'UpArrow[\s\S]+?DownArrow[\s\S]+?\$inputBuffer = ''''') 'Notification arrow navigation does not clear typed input'
-    Assert-True ($centerSource -match 'IsNullOrEmpty\(\$inputBuffer\)[\s\S]+?\$displayEntries\[\$selectedNotificationIndex\]\.event') 'Blank notification Enter does not open the highlighted row'
-    Assert-True ($centerSource -match 'function Update-CenterSelection[\s\S]+?\[char\]27[\s\S]+?\$escape\[s[\s\S]+?\$escape\[u') 'Notification selection does not use terminal-native in-place row updates'
-    Assert-True ($centerSource -notmatch 'SetCursorPosition') 'Notification selection still uses the cursor API that appends duplicate rows in Windows Terminal'
-    Assert-True ($centerSource -match 'Update-CenterSelection -Events \$events[\s\S]+?\$needsRender = \$true') 'Arrow navigation does not fall back to a full render when an in-place update is unavailable'
-    Assert-True ($centerSource -match 'Get-AgentNotificationDisplayEntries[\s\S]+?Write-CenterEntry -Entry \$entry' -and `
-        $centerSource -match 'Format-AgentNotificationDisplayLine -Event \$event -Number \$Entry\.number') `
+    Assert-True ($centerSource -notmatch '\[ConsoleKey\]::(?:UpArrow|DownArrow)') 'Notification pane still includes removed arrow-key navigation'
+    Assert-True ($centerSource -match 'IsNullOrEmpty\(\$inputBuffer\)[\s\S]+?\$selection = 1') 'Blank Enter does not default to the latest notification'
+    Assert-True ($centerSource -match 'Enter = latest') 'Notification help does not advertise the blank-Enter shortcut'
+    Assert-True ($centerSource -match 'Get-AgentNotificationDisplayEntries[\s\S]+?Format-AgentNotificationDisplayLine -Event \$event -Number \$entry\.number') `
         'Notification center does not render one collapsed row per chat'
     Assert-True ($centerSource -match 'Read-AgentNotificationChatNameCache') 'Notification center does not preload persisted chat names'
     Assert-True ($centerSource -match 'Get-CachedAgentNotificationChatName') 'Notification center does not reuse cached chat names'
@@ -350,18 +339,18 @@ try {
 
     $freshControl = Get-AgentControlCenterArguments -LauncherRunning $false -NotificationsRunning $false
     Assert-Equal @($freshControl).Count 2 'Fresh control center does not create two windows'
-    Assert-True ($freshControl[0] -match '^-w agent-notification-center new-tab --title Notifications') 'Fresh control center does not create the notification window first'
-    Assert-True ($freshControl[1] -match '^-w agent-project-launcher new-tab --title Projects') 'Fresh control center does not create the project window last'
+    Assert-True ($freshControl[0] -match '^-M -w agent-notification-center new-tab --title Notifications') 'Fresh control center does not create the maximized notification window first'
+    Assert-True ($freshControl[1] -match '^-M -w agent-project-launcher new-tab --title Projects') 'Fresh control center does not create the maximized project window last'
     Assert-True (($freshControl -join ' ') -notmatch '\bsp\b|split-pane|swap-pane') 'Fresh control center still contains pane-splitting commands'
     $existingControl = Get-AgentControlCenterArguments -LauncherRunning $true -NotificationsRunning $true
     Assert-Equal @($existingControl).Count 2 'Existing control center does not focus both windows'
-    Assert-Equal $existingControl[0] '-w agent-notification-center focus-tab -t 0' 'Existing notification window is not focused first'
-    Assert-Equal $existingControl[1] '-w agent-project-launcher focus-tab -t 0' 'Existing project window is not focused last'
+    Assert-Equal $existingControl[0] '-M -w agent-notification-center focus-tab -t 0' 'Existing notification window is not maximized and focused first'
+    Assert-Equal $existingControl[1] '-M -w agent-project-launcher focus-tab -t 0' 'Existing project window is not maximized and focused last'
     $missingNotifications = Get-AgentControlCenterArguments -LauncherRunning $true -NotificationsRunning $false
     Assert-True ($missingNotifications[0] -match 'agent-notification-center new-tab --title Notifications') 'Missing notification window is not restored'
-    Assert-Equal $missingNotifications[1] '-w agent-project-launcher focus-tab -t 0' 'Restoring notifications does not reuse the project window'
+    Assert-Equal $missingNotifications[1] '-M -w agent-project-launcher focus-tab -t 0' 'Restoring notifications does not maximize and reuse the project window'
     $missingLauncher = Get-AgentControlCenterArguments -LauncherRunning $false -NotificationsRunning $true
-    Assert-Equal $missingLauncher[0] '-w agent-notification-center focus-tab -t 0' 'Restoring the launcher does not reuse the notification window'
+    Assert-Equal $missingLauncher[0] '-M -w agent-notification-center focus-tab -t 0' 'Restoring the launcher does not maximize and reuse the notification window'
     Assert-True ($missingLauncher[1] -match 'agent-project-launcher new-tab --title Projects') 'Missing project window is not restored'
 
     $projectGuid = '{1A5FF801-DEAD-BEEF-8123-0123456789AB}'
@@ -406,6 +395,7 @@ try {
     try {
         Start-ProjectWindow -ProfileName 'project with spaces (d C:\dev\project with spaces)' `
             -ProfileGuid '{4A5FF801-DEAD-BEEF-8123-0123456789AB}' -ProfilePath 'C:\dev\project with spaces'
+        Assert-True ($script:CapturedProjectLaunch.ArgumentList -match '^-M -w agent-project-') 'New AI chat window is not launched maximized'
         $titleMatches = [regex]::Matches($script:CapturedProjectLaunch.ArgumentList, '--title "project with spaces"').Count
         Assert-Equal $titleMatches 4 'Not every project pane received the project-only title'
         Assert-True ($script:CapturedProjectLaunch.ArgumentList -notmatch '--title "\d+ (Codex|Claude)"') 'Agent-number title still overrides the project title'
@@ -450,7 +440,7 @@ try {
     try {
         Start-ProjectWindow -ProfileName 'Existing project' -ProfileGuid $projectGuid -ProfilePath 'C:\dev\existing-project'
         Assert-Equal $script:CapturedStartProcess.FilePath 'wt.exe' 'Existing project did not target Windows Terminal'
-        Assert-Equal $script:CapturedStartProcess.ArgumentList "-w $projectWindow focus-tab -t 0" 'Existing project did not emit only the focus command'
+        Assert-Equal $script:CapturedStartProcess.ArgumentList "-M -w $projectWindow focus-tab -t 0" 'Existing project did not emit the maximized focus command'
 
         $paneGuardName = Get-AgentPaneGuardName -Window $projectWindow -Pane 2
         $paneGuard = New-Object System.Threading.Mutex($false, $paneGuardName)
@@ -458,7 +448,7 @@ try {
             Start-ProjectWindow -ProfileName 'Existing project' -ProfileGuid $projectGuid -ProfilePath 'C:\dev\existing-project' `
                 -ResumeSource Codex -ResumePane 2 -ResumeSessionId 'codex-session-id'
             Assert-Equal $script:CapturedStartProcess.ArgumentList `
-                "-w $projectWindow focus-tab -t 0 ; move-focus first ; move-focus nextInOrder" `
+                "-M -w $projectWindow focus-tab -t 0 ; move-focus first ; move-focus nextInOrder" `
                 'Existing exact chat did not focus its original pane'
         } finally {
             $paneGuard.Dispose()
