@@ -295,7 +295,8 @@ try {
     Assert-True ($centerSource -match 'Up/Down = select') 'Notification help does not advertise arrow-key selection'
     Assert-True ($centerSource -match 'UpArrow[\s\S]+?DownArrow[\s\S]+?\$inputBuffer = ''''') 'Notification arrow navigation does not clear typed input'
     Assert-True ($centerSource -match 'IsNullOrEmpty\(\$inputBuffer\)[\s\S]+?\$displayEntries\[\$selectedNotificationIndex\]\.event') 'Blank notification Enter does not open the highlighted row'
-    Assert-True ($centerSource -match 'function Update-CenterSelection[\s\S]+?SetCursorPosition') 'Notification selection does not support in-place row updates'
+    Assert-True ($centerSource -match 'function Update-CenterSelection[\s\S]+?\[char\]27[\s\S]+?\$escape\[s[\s\S]+?\$escape\[u') 'Notification selection does not use terminal-native in-place row updates'
+    Assert-True ($centerSource -notmatch 'SetCursorPosition') 'Notification selection still uses the cursor API that appends duplicate rows in Windows Terminal'
     Assert-True ($centerSource -match 'Update-CenterSelection -Events \$events[\s\S]+?\$needsRender = \$true') 'Arrow navigation does not fall back to a full render when an in-place update is unavailable'
     Assert-True ($centerSource -match 'Get-AgentNotificationDisplayEntries[\s\S]+?Write-CenterEntry -Entry \$entry' -and `
         $centerSource -match 'Format-AgentNotificationDisplayLine -Event \$event -Number \$Entry\.number') `
