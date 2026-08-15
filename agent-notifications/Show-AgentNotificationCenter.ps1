@@ -11,6 +11,29 @@ if (-not $created) {
     return
 }
 
+$script:centerRowTops = @()
+$script:centerWindowWidth = 0
+
+function Write-CenterEntry {
+    param(
+        [Parameter(Mandatory = $true)][object]$Entry,
+        [Parameter(Mandatory = $true)][int]$Index,
+        [Parameter(Mandatory = $true)][int]$SelectedIndex,
+        [Parameter(Mandatory = $true)][hashtable]$ChatNames
+    )
+
+    $event = $Entry.event
+    $chatName = Get-CachedAgentNotificationChatName -Event $event -Cache $ChatNames -StateRoot $StateRoot
+    $line = Format-AgentNotificationDisplayLine -Event $event -Number $Entry.number -ChatName $chatName
+    $color = if (Test-AgentNotificationHandled -Event $event) { 'Blue' } else { 'Yellow' }
+    $line = $(if ($Index -eq $SelectedIndex) { '> ' } else { '  ' }) + $line
+    if ($Index -eq $SelectedIndex) {
+        Write-Host $line -ForegroundColor White -BackgroundColor DarkCyan
+    } else {
+        Write-Host $line -ForegroundColor $color
+    }
+}
+
 function Show-Center {
     param(
         [object[]]$Events,
@@ -21,26 +44,21 @@ function Show-Center {
     )
 
     Clear-Host
+    $script:centerWindowWidth = [Console]::WindowWidth
     Write-Host '---==[ Agent Notifications ]==---' -ForegroundColor Cyan
     Write-Host 'Up/Down = select   Enter = open   number/d/d12/d12 d3/c/q + Enter = run command' -ForegroundColor DarkGray
     Write-Host ''
 
     $displayEntries = @(Get-AgentNotificationDisplayEntries -Events $Events)
     if ($displayEntries.Count -eq 0) {
+        $script:centerRowTops = @()
         Write-Host '  No notifications yet.' -ForegroundColor DarkGray
     } else {
+        $script:centerRowTops = @()
         for ($i = 0; $i -lt $displayEntries.Count; $i++) {
             $entry = $displayEntries[$i]
-            $event = $entry.event
-            $chatName = Get-CachedAgentNotificationChatName -Event $event -Cache $ChatNames -StateRoot $StateRoot
-            $line = Format-AgentNotificationDisplayLine -Event $event -Number $entry.number -ChatName $chatName
-            $color = if (Test-AgentNotificationHandled -Event $event) { 'Blue' } else { 'Yellow' }
-            $line = $(if ($i -eq $SelectedIndex) { '> ' } else { '  ' }) + $line
-            if ($i -eq $SelectedIndex) {
-                Write-Host $line -ForegroundColor White -BackgroundColor DarkCyan
-            } else {
-                Write-Host $line -ForegroundColor $color
-            }
+            $script:centerRowTops += [Console]::CursorTop
+            Write-CenterEntry -Entry $entry -Index $i -SelectedIndex $SelectedIndex -ChatNames $ChatNames
         }
     }
 
@@ -48,6 +66,45 @@ function Show-Center {
         Write-Host "`n$Notice" -ForegroundColor Yellow
     }
     Write-Host "`nSelection: $InputBuffer" -NoNewline -ForegroundColor Green
+}
+
+function Update-CenterSelection {
+    param(
+        [object[]]$Events,
+        [hashtable]$ChatNames,
+        [int]$PreviousIndex,
+        [int]$SelectedIndex
+    )
+
+    $displayEntries = @(Get-AgentNotificationDisplayEntries -Events $Events)
+    if ($PreviousIndex -lt 0 -or $SelectedIndex -lt 0 -or
+        $PreviousIndex -ge $displayEntries.Count -or $SelectedIndex -ge $displayEntries.Count -or
+        $script:centerRowTops.Count -ne $displayEntries.Count -or
+        $script:centerWindowWidth -ne [Console]::WindowWidth) {
+        return $false
+    }
+
+    $originalLeft = 0
+    $originalTop = 0
+    $hasOriginalPosition = $false
+    try {
+        $originalLeft = [Console]::CursorLeft
+        $originalTop = [Console]::CursorTop
+        $hasOriginalPosition = $true
+        $indexes = @(@($PreviousIndex, $SelectedIndex) | Select-Object -Unique)
+        foreach ($index in $indexes) {
+            [Console]::SetCursorPosition(0, $script:centerRowTops[$index])
+            Write-CenterEntry -Entry $displayEntries[$index] -Index $index `
+                -SelectedIndex $SelectedIndex -ChatNames $ChatNames
+        }
+        [Console]::SetCursorPosition($originalLeft, $originalTop)
+        return $true
+    } catch {
+        if ($hasOriginalPosition) {
+            try { [Console]::SetCursorPosition($originalLeft, $originalTop) } catch { }
+        }
+        return $false
+    }
 }
 
 $events = @()
@@ -109,6 +166,8 @@ try {
             if ($key.Key -eq [ConsoleKey]::UpArrow -or $key.Key -eq [ConsoleKey]::DownArrow) {
                 $displayEntries = @(Get-AgentNotificationDisplayEntries -Events $events)
                 $direction = if ($key.Key -eq [ConsoleKey]::UpArrow) { -1 } else { 1 }
+                $previousNotificationIndex = $selectedNotificationIndex
+                $hadTransientText = (-not [string]::IsNullOrEmpty($inputBuffer) -or -not [string]::IsNullOrWhiteSpace($notice))
                 $selectedNotificationIndex = Move-ListSelectionIndex -Index $selectedNotificationIndex `
                     -Count $displayEntries.Count -Direction $direction
                 if ($selectedNotificationIndex -ge 0) {
@@ -117,7 +176,10 @@ try {
                 }
                 $inputBuffer = ''
                 $notice = ''
-                $needsRender = $true
+                if ($hadTransientText -or -not (Update-CenterSelection -Events $events -ChatNames $chatNames `
+                    -PreviousIndex $previousNotificationIndex -SelectedIndex $selectedNotificationIndex)) {
+                    $needsRender = $true
+                }
                 continue
             }
             if ($key.Key -eq [ConsoleKey]::Backspace) {

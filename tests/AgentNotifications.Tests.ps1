@@ -295,7 +295,10 @@ try {
     Assert-True ($centerSource -match 'Up/Down = select') 'Notification help does not advertise arrow-key selection'
     Assert-True ($centerSource -match 'UpArrow[\s\S]+?DownArrow[\s\S]+?\$inputBuffer = ''''') 'Notification arrow navigation does not clear typed input'
     Assert-True ($centerSource -match 'IsNullOrEmpty\(\$inputBuffer\)[\s\S]+?\$displayEntries\[\$selectedNotificationIndex\]\.event') 'Blank notification Enter does not open the highlighted row'
-    Assert-True ($centerSource -match 'Get-AgentNotificationDisplayEntries[\s\S]+?Format-AgentNotificationDisplayLine -Event \$event -Number \$entry\.number') `
+    Assert-True ($centerSource -match 'function Update-CenterSelection[\s\S]+?SetCursorPosition') 'Notification selection does not support in-place row updates'
+    Assert-True ($centerSource -match 'Update-CenterSelection -Events \$events[\s\S]+?\$needsRender = \$true') 'Arrow navigation does not fall back to a full render when an in-place update is unavailable'
+    Assert-True ($centerSource -match 'Get-AgentNotificationDisplayEntries[\s\S]+?Write-CenterEntry -Entry \$entry' -and `
+        $centerSource -match 'Format-AgentNotificationDisplayLine -Event \$event -Number \$Entry\.number') `
         'Notification center does not render one collapsed row per chat'
     Assert-True ($centerSource -match 'Read-AgentNotificationChatNameCache') 'Notification center does not preload persisted chat names'
     Assert-True ($centerSource -match 'Get-CachedAgentNotificationChatName') 'Notification center does not reuse cached chat names'
