@@ -452,14 +452,14 @@ function Format-AgentNotificationDisplayLine {
     )
 
     $timestamp = Get-AgentNotificationProperty -InputObject $Event -Name 'timestamp'
-    $time = ([DateTimeOffset]::Parse("$timestamp")).ToLocalTime().ToString('HH:mm:ss')
+    $dateTime = ([DateTimeOffset]::Parse("$timestamp")).ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss')
     $project = Get-AgentNotificationProjectName -Event $Event
     $chat = $ChatName
     if ([string]::IsNullOrWhiteSpace($chat)) {
         $chat = Get-AgentNotificationChatName -Event $Event -CodexSessionIndexPath $CodexSessionIndexPath `
             -CodexHistoryPath $CodexHistoryPath -ClaudeHistoryPath $ClaudeHistoryPath
     }
-    return '{0,3}  {1}  {2}  {3}' -f $Number, $time, $project, $chat
+    return '{0,3}  {1}  {2}  {3}' -f $Number, $dateTime, $project, $chat
 }
 
 function Find-AgentNotificationProjectProfile {

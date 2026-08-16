@@ -22,7 +22,7 @@ On the first launcher-created Codex session, run `/hooks` and trust the `PreTool
 - Press Enter with an empty selection to open notification `1`, the latest chat.
 - Each chat occupies a single row that always shows its latest event. A new notification for the same chat replaces that chat's previous row instead of adding another one.
 - Up to 99 chats are shown oldest-to-newest from top to bottom, with the most recently active chat numbered `1` at the bottom.
-- Each row contains only its number, time, short project name, and best available chat name.
+- Each row contains only its number, local date and time, short project name, and best available chat name.
 - Each new event also shows a short native Windows toast with the project and chat name. Its **Open chat** button follows the same exact-chat routing as the inbox and marks the event handled after a successful open.
 - Native Codex answer-choice questions are captured as input notifications before Codex waits for your selection.
 - Toasts keep the standard notification sound and expire quickly from the screen; Windows controls the precise display timing.

@@ -276,7 +276,7 @@ try {
     Assert-True (-not (Set-AgentNotificationHandled -EventId @('missing-1') -StateRoot $doneRoot)) 'Marking an unknown notification handled reported a match'
     $compactLine = Format-AgentNotificationDisplayLine -Event $events[0] -Number 1 `
         -CodexSessionIndexPath $codexIndex -CodexHistoryPath $codexHistory -ClaudeHistoryPath $claudeHistory
-    Assert-True ($compactLine -match '^\s*1\s+\d{2}:\d{2}:\d{2}\s+sample-project\s+Earlier name$') 'Compact notification row did not contain only number, time, project, and chat name'
+    Assert-True ($compactLine -match '^\s*1\s+\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s+sample-project\s+Earlier name$') 'Compact notification row did not contain only number, local date and time, project, and chat name'
     Assert-True ($compactLine -notmatch 'Codex|approval|pane|Run tests|C:\\') 'Compact notification row leaked hidden routing or message details'
 
     $centerSource = Get-Content -Raw -LiteralPath $centerPath
