@@ -1,8 +1,7 @@
 param(
     [string]$Payload,
     [string]$StateRoot,
-    [switch]$NoToast,
-    [switch]$NoFocus
+    [switch]$NoToast
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,9 +17,6 @@ try {
         $event = ConvertTo-AgentNotificationEvent -InputObject $inputObject
         if ($null -ne $event) {
             [void](Write-AgentNotificationEvent -Event $event -StateRoot $StateRoot)
-            if (-not $NoFocus) {
-                try { [void](Request-AgentNotificationCenterAttention -Event $event) } catch { }
-            }
             if (-not $NoToast) {
                 try { Show-AgentNotificationToast -Event $event } catch {
                     try { [System.Media.SystemSounds]::Exclamation.Play() } catch { }

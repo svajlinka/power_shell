@@ -86,46 +86,6 @@ try {
     Assert-True ($null -eq (ConvertFrom-AgentNotificationUri -Uri 'agentnotify://open/not-an-id')) 'URI parser accepted an invalid event ID'
     Assert-True ($null -eq (ConvertFrom-AgentNotificationUri -Uri ("agentnotify://open/$($approval.id)/"))) 'URI parser accepted a non-canonical path'
 
-    $notificationCenterGuard = 'Local\AgentNotifications.Tests.Center.' + [guid]::NewGuid().ToString('N')
-    $script:CapturedNotificationCenterLaunch = $null
-    function Start-Process {
-        param([string]$FilePath, [object]$ArgumentList)
-        $script:CapturedNotificationCenterLaunch = [pscustomobject]@{ FilePath = $FilePath; ArgumentList = "$ArgumentList" }
-    }
-    try {
-        $testCenterScript = Join-Path $testRoot "center's script.ps1"
-        foreach ($status in @('input', 'approval', 'finished')) {
-            $attentionEvent = [pscustomobject]@{ status = $status }
-            Assert-True (Request-AgentNotificationCenterAttention -Event $attentionEvent -CenterScript $testCenterScript `
-                -GuardName $notificationCenterGuard) "$status event did not request notification-center attention"
-        }
-        Assert-Equal $script:CapturedNotificationCenterLaunch.FilePath 'wt.exe' 'Closed notification center did not target Windows Terminal'
-        Assert-True ($script:CapturedNotificationCenterLaunch.ArgumentList -match '^-M -w agent-notification-center new-tab --title Notifications') `
-            'Closed notification center was not recreated maximized'
-        $centerLaunchScripts = @(Get-EmbeddedPowerShellScripts -CommandLine $script:CapturedNotificationCenterLaunch.ArgumentList)
-        Assert-Equal $centerLaunchScripts.Count 1 'Notification-center launch did not contain one encoded script'
-        Assert-Equal $centerLaunchScripts[0] "& '$($testCenterScript -replace "'", "''")'" `
-            'Notification-center script path was not encoded safely'
-
-        $centerGuard = New-Object System.Threading.Mutex($false, $notificationCenterGuard)
-        try {
-            [void](Request-AgentNotificationCenterAttention -Event ([pscustomobject]@{ status = 'input' }) `
-                -CenterScript $testCenterScript -GuardName $notificationCenterGuard)
-            Assert-Equal $script:CapturedNotificationCenterLaunch.ArgumentList `
-                '-M -w agent-notification-center focus-tab -t 0' 'Existing notification center was not focused'
-        } finally {
-            $centerGuard.Dispose()
-        }
-
-        $script:CapturedNotificationCenterLaunch = $null
-        Assert-True (-not (Request-AgentNotificationCenterAttention -Event ([pscustomobject]@{ status = 'ignored' }) `
-            -CenterScript $testCenterScript -GuardName $notificationCenterGuard)) `
-            'Unsupported event status requested notification-center attention'
-        Assert-True ($null -eq $script:CapturedNotificationCenterLaunch) 'Unsupported event status launched Windows Terminal'
-    } finally {
-        Remove-Item -LiteralPath Function:\Start-Process
-    }
-
     @(
         '{"id":"codex-session","thread_name":"Earlier name"}',
         '{"id":"other-session","thread_name":"Ignore me"}',
@@ -561,16 +521,12 @@ try {
         $env:AI_NOTIFY_GUARD = 'test-guard'
         $receiverPayload = '{"hook_event_name":"PreToolUse","session_id":"receiver-session","tool_name":"request_user_input","tool_input":{"questions":[{"question":"Receiver input test"}]}}'
         $receiverOutput = $receiverPayload | & powershell.exe -NoProfile -ExecutionPolicy Bypass `
-            -File $receiverPath -StateRoot $stateRoot -NoToast -NoFocus
+            -File $receiverPath -StateRoot $stateRoot -NoToast
         Assert-Equal $receiverOutput '{}' 'Receiver did not emit a no-op JSON hook response'
         Assert-Equal @(Read-AgentNotificationEvents -StateRoot $stateRoot).Count 1 'Receiver did not append its event'
         $receiverEvent = @(Read-AgentNotificationEvents -StateRoot $stateRoot)[0]
         Assert-Equal $receiverEvent.status 'input' 'Receiver did not persist the Codex question as input'
         Assert-Equal $receiverEvent.message 'Receiver input test' 'Receiver did not persist the Codex question preview'
-        $receiverSource = Get-Content -Raw -LiteralPath $receiverPath
-        Assert-True ($receiverSource -match '\[switch\]\$NoFocus') 'Receiver does not expose the no-focus test switch'
-        Assert-True ($receiverSource -match 'Request-AgentNotificationCenterAttention -Event \$event') `
-            'Receiver does not request notification-center attention after recording an event'
     } finally {
         $env:AI_NOTIFY_ENABLED = $oldEnabled
         $env:AI_NOTIFY_SOURCE = $oldSource
