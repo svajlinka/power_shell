@@ -520,6 +520,29 @@ function Write-AgentNotificationEvent {
     return $eventFile
 }
 
+function Request-AgentNotificationCenterAttention {
+    param(
+        [Parameter(Mandatory = $true)][object]$Event,
+        [string]$CenterScript = (Join-Path $PSScriptRoot 'Show-AgentNotificationCenter.ps1'),
+        [string]$WindowName = 'agent-notification-center',
+        [string]$GuardName = 'Local\AgentNotifications.ControlCenter.Notifications'
+    )
+
+    $status = "$(Get-AgentNotificationProperty -InputObject $Event -Name 'status')"
+    if ($status -notin @('input', 'approval', 'finished')) { return $false }
+
+    if (Test-AgentNotificationTarget -Guard $GuardName) {
+        $terminalArguments = "-M -w $WindowName focus-tab -t 0"
+    } else {
+        $centerCommand = "& '" + ($CenterScript -replace "'", "''") + "'"
+        $centerEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($centerCommand))
+        $terminalArguments = "-M -w $WindowName new-tab --title Notifications powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $centerEncoded"
+    }
+
+    Start-Process wt.exe -ArgumentList $terminalArguments
+    return $true
+}
+
 function Read-AgentNotificationEvents {
     param([string]$StateRoot)
 
@@ -751,6 +774,7 @@ Export-ModuleMember -Function @(
     'Format-AgentNotificationDisplayLine',
     'Find-AgentNotificationProjectProfile',
     'Write-AgentNotificationEvent',
+    'Request-AgentNotificationCenterAttention',
     'Read-AgentNotificationEvents',
     'Find-AgentNotificationEventById',
     'ConvertFrom-AgentNotificationUri',
